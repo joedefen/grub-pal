@@ -140,4 +140,52 @@ GRUB_DISTRIBUTOR:
   specials: []
   brief: "Label used to identify your OS in the menu entries."
   full: "The string used in the menu entry titles to denote the operating system (e.g., 'Ubuntu', 'Debian')."
+
+GRUB_RECORDFAIL_TIMEOUT:
+  section: "Timeout & Menu"
+  type: input
+  default: "30" # Often defaulted to 30s
+  enums: []
+  regex: '^\d+$'
+  specials: []
+  brief: "Timeout (in seconds) used after a boot failure or crash."
+  full: "If a previous boot failed (e.g., failed shutdown, kernel panic), GRUB will wait this long to give the user a chance to recover. Setting this to 0 or a low number can speed up boot after a known failure condition."
+
+GRUB_DISABLE_LINUX_UUID:
+  section: "Kernel Arguments"
+  type: boolean
+  default: "false"
+  enums:
+    - value: "true"
+      meaning: "Use device names (e.g., /dev/sda1) instead of UUIDs in boot entries."
+    - value: "false"
+      meaning: "Use Universally Unique Identifiers (UUIDs) for device paths."
+  regex: '^(true|false)$'
+  specials: []
+  brief: "Force GRUB to use device names instead of UUIDs for mounting filesystems."
+  full: "UUIDs are generally safer, but if you have a non-standard setup (like certain RAID/LVM) or are debugging, disabling UUIDs might be necessary."
+
+GRUB_ENABLE_CRYPTODISK:
+  section: "Security"
+  type: boolean
+  default: "n" # GRUB uses 'y'/'n' for this parameter
+  enums:
+    - value: "y"
+      meaning: "Enable support for encrypted disks (LUKS/dm-crypt) in the GRUB environment."
+    - value: "n"
+      meaning: "Do not include support for encrypted disks."
+  regex: '^(y|n)$'
+  specials: []
+  brief: "Enable support for booting from encrypted disks."
+  full: "If your system's root partition is encrypted (LUKS), you must enable this parameter and run update-grub for the boot process to work correctly."
+
+GRUB_THEME:
+  section: "Appearance"
+  type: input
+  default: ""
+  enums: []
+  regex: '^(\/|\w).*$'
+  specials: []
+  brief: "Path to the directory containing a GRUB theme (optional)."
+  full: "Specifies the full path to a directory containing a GRUB theme for a more polished graphical look. If unset, it uses the basic look defined by GRUB_GFXMODE."
 """
