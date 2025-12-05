@@ -99,22 +99,23 @@ Kernel Arguments:
   GRUB_DISABLE_LINUX_UUID:
     default: 'false'
     enums:
-      true: Use device names (e.g., /dev/sda1) instead of UUIDs.
-      false: Use UUIDs (Recommended - less prone to breaking when disks are moved).
+      'true': Use device names (e.g., /dev/sda1) instead of UUIDs.
+      'false': Use UUIDs (Recommended - less prone to breaking when disks are moved).
     guidance: "Setting to 'true' stops GRUB from using the unique disk UUID
       (Universal Unique Identifier) for the root filesystem.
-      \n- Use 'false' unless you have a specific reason."
+      \n%ENUMS%"
     checks: []
     specials: []
 
   GRUB_DISABLE_OS_PROBER:
     default: 'false'
     enums:
-      true: Do not search for other operating systems.
-      false: Search for and automatically add other operating systems to the menu.
+      'true': Do not search for other operating systems.
+      'false': Search for and automatically add other operating systems to the menu.
     guidance: "Setting to 'true' prevents GRUB from automatically scanning other partitions
       for installed operating systems (like Windows, other Linux distros)
-      and adding them to the boot menu."
+      and adding them to the boot menu.
+      \n%ENUMS%"
     checks: []
     specials: []
 

@@ -13,6 +13,7 @@ import time
 import textwrap
 import traceback
 import sys
+from types import SimpleNamespace
 from .ConsoleWindowCopy import OptionSpinner, ConsoleWindow
 from .CannedConfig import CannedConfig
 from .GrubParser import GrubParser
@@ -28,9 +29,15 @@ class GrubPal:
         self.spins = None
         self.sections = CannedConfig().data
         self.params = {}
-        for _, params in self.sections.items():
-            for param, payload in params.items():
-                self.params[param] = payload
+        self.positions = []
+        self.prev_pos = -1024  # to detect direction
+        for section, params in self.sections.items():
+            self.positions.append( SimpleNamespace(
+                param_name=None, section_name=section))
+            for param_name, payload in params.items():
+                self.params[param_name] = payload
+                self.positions.append(SimpleNamespace(
+                    param_name=param_name, section_name=None))
         self.param_names = list(self.params.keys())
         self.param_values = {}
         self.parsed = GrubParser(params=self.param_names)
@@ -56,20 +63,20 @@ class GrubPal:
         self.win = ConsoleWindow(head_line=True, keys=spinner.keys)
         self.win.opt_return_if_pos_change = True
         
-    def _get_enums_checks(self, pos):
+    def _get_enums_checks(self):
         """ TBD"""
         enums, checks = None, None
-        if 0 <= pos < len(self.param_names):
-            param_name = self.param_names[self.win.pick_pos]
-            params = self.params[param_name]
-            enums = params.get('enums', None)
-            checks = params.get('checks', None)
+        pos = self.adjust_picked_pos()
+        param_name = self.positions[pos].param_name
+        params = self.params[param_name]
+        enums = params.get('enums', None)
+        checks = params.get('checks', None)
         return param_name, params, enums, checks
         
     def add_guided_head(self):
         """ TBD"""
         header = ''
-        _, _, enums, checks = self._get_enums_checks(self.win.pick_pos)
+        _, _, enums, checks = self._get_enums_checks()
         if enums:
             header += ' [n]ext'
         if checks:
@@ -79,28 +86,50 @@ class GrubPal:
         header += f' [g]{guide} [q]uit'
         self.win.add_header(header)
 
+    def adjust_picked_pos(self):
+        """ This assumes:
+          - section names are not adjacent (no empty sections) 
+          - the 1st entry is a section name
+          - the last entry is NOT a section name
+        """
+        win = self.win
+        pos = win.pick_pos
+        pos = max(min(len(self.positions)-1, pos), 1)
+        if pos == win.pick_pos and pos == self.prev_pos:
+            return pos
+        ns = self.positions[pos]
+        if ns.section_name:
+            if pos >= self.prev_pos:
+                pos += 1
+            else:
+                pos -= 1
+        win.pick_pos = pos
+        self.prev_pos = pos
+        return pos
+
+
     def add_guided_body(self):
         """ TBD """
         win = self.win # short hand
-        picked = win.pick_pos
-        win.pick_pos = picked = min(len(self.param_names)-1, picked)
+        picked = self.adjust_picked_pos()
         emits = []
         view_size = win.scroll_view_size
-        for pos, param_name in enumerate(self.param_names):
+        for pos, ns in enumerate(self.positions):
+            if ns.section_name:
+                win.add_body(f'[{ns.section_name}]')
+                continue
+
+            param_name = ns.param_name
             value = self.param_values[param_name]
-#           descr = self.params[param_name]['enums'].get(value, None)
-#           more = f' # {descr}' if descr else ''
-#           param_line = f'{param_name}={value}{more}'
-#           param_line = f'{param_name}={value}'
             dots = '.' * (self.param_name_wid-len(param_name)+8)
-            param_line = f'{param_name[5:]} {dots}  {value}'
+            param_line = f'  {param_name[5:]} {dots}  {value}'
             if not self.spins.guide or pos != picked:
                 win.add_body(param_line)
                 continue
             emits.append(param_line)
             text = self.params[param_name]['guidance']
             lines = text.split('\n')
-            lead = '  | '
+            lead = '    '
             wid = win.cols - len(lead)
             for line in lines:
                 wrapped = ''
@@ -154,7 +183,7 @@ class GrubPal:
                     spins.quit = False
                     break
 
-                name, _, enums, checks = self._get_enums_checks(win.pick_pos)
+                name, _, enums, checks = self._get_enums_checks()
                 if spins.next:
                     spins.next = False
                     if enums:
