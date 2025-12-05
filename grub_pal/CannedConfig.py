@@ -136,20 +136,20 @@ Appearance:
     enums: {}
     guidance: "Sets the visible name of the operating system in the boot menu.
       \n. By default, it uses the Linux Standard Base (LSB) name (e.g., 'Ubuntu').
-      \n. nSet to a custom string to change the display name."
+      \n. Set to a custom string to change the display name."
     checks: []
     specials: []
 
   GRUB_GFXMODE:
     default: 640x480
     enums:
-      "640x480": Standard lowest common denominator resolution.
-      "800x600": Older standard resolution.
-      "1024x768": Common monitor resolution.
-      "auto": Choose the highest available resolution for your display.
+      "640x480": Most widely available monitor resolution.
+      "800x600": Older standard monitor resolution.
+      "1024x768": Common contemporary monitor resolution.
+      "auto": Let GRUB choose a suitable monitor resolution.
     guidance: "Sets the resolution for the GRUB menu display.
-      \n. Use 'auto' to let GRUB pick the best available mode for your monitor.
-      \n. Separate multiple preferred resolutions with commas (e.g., 1024x768,auto)."
+      \n. Separate multiple desired resolutions with commas (e.g., 1024x768,auto).
+      \n%ENUMS%"
     checks:
       regex: ^(auto|\d+x\d+)(,\s*(auto|\d+x\d+))*$
     specials: []

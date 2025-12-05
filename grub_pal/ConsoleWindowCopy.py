@@ -831,7 +831,7 @@ class ConsoleWindow:
         # --- 4. Final Update (Only one physical screen update) ---
         curses.doupdate()
 
-    def answer(self, prompt='Type string [then Enter]', seed='', width=80):
+    def answer(self, prompt='Type string [then Enter]', seed='', width=80, esc_abort=False):
         """
         Presents a modal dialog box for manual text input, handling arbitrarily
         long strings.
@@ -845,8 +845,9 @@ class ConsoleWindow:
         :type prompt: str
         :type seed: str
         :type width: int
-        :returns: The string entered by the user upon pressing Enter.
-        :rtype: str
+        :returns: The string entered by the user upon pressing Enter
+            or None if aborted with ESC (when ``esc_abort`` is True).
+        :rtype: str or None
         """
         input_string = list(seed)
         cursor_pos = len(input_string)
@@ -886,7 +887,8 @@ class ConsoleWindow:
             # Position the cursor
             self.scr.move(row0 + 1, col0 + 1 + display_cursor_pos)
 
-            ending = 'Press ENTER to submit'[:text_win_width]
+            abort = ' or ESC to abort' if esc_abort else ''
+            ending = f'ENTER to submit{abort}'[:text_win_width]
             self.scr.addstr(row9, col0 + 1 + text_win_width - len(ending), ending)
             self.scr.refresh()
             curses.curs_set(2)
@@ -896,7 +898,9 @@ class ConsoleWindow:
             if key in [10, 13]:  # Enter key
                 curses.curs_set(0) # Restore cursor visibility
                 return "".join(input_string)
-            if key in [curses.KEY_BACKSPACE, 127, 8]:  # Backspace
+            if key in [27] and esc_abort:  # ESC key
+                return None
+            elif key in [curses.KEY_BACKSPACE, 127, 8]:  # Backspace
                 if cursor_pos > 0:
                     input_string.pop(cursor_pos - 1)
                     cursor_pos -= 1

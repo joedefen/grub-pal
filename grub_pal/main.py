@@ -1,11 +1,22 @@
 #!/usr/bin/env python3
 """
 TODO:
- - insert section headers
- - align values
- - drop "GRUB_" prefix from param names
- - prompt if pattern
- - [w]rite command (start of)
+ - get resolutions for terminal?
+ - [w]rite command (start of at least)
+ - launch/discover grub-update or whatever
+ - writing YAML into .config directory and read it first (allow user extension)
+ 
+ Backburner:
+- Recovery mechanism - Consider documenting how users can restore from backup
+  if something goes wrong (especially from a rescue environment).
+- Distribution compatibility - Different distros use update-grub vs grub-mkconfig.
+  Worth mentioning your compatibility scope.
+- The "Boot Entry Management" TODO - This is actually quite complex since it
+  involves parsing grub.cfg rather than just modifying /etc/default/grub.
+  Consider whether this fits the "simple and safe" philosophy.
+- Implement any of these:
+    - get_menu_entries requires parsing /boot/grub/grub.cfg which can be tricky
+    - get-res-list would need to query display capabilities (maybe via hwinfo, xrandr, or reading VESA modes)
 """
 # pylint: disable=invalid_name,broad-exception-caught
 
@@ -13,6 +24,7 @@ import time
 import textwrap
 import traceback
 import sys
+import re
 from types import SimpleNamespace
 from .ConsoleWindowCopy import OptionSpinner, ConsoleWindow
 from .CannedConfig import CannedConfig
@@ -62,9 +74,9 @@ class GrubPal:
         spinner.add_key('next', 'n - next value in cycle', category='action')
         spinner.add_key('edit', 'e - edit value', category='action')
         spinner.add_key('guide', 'g - guidance toggle', vals=[True, False])
-        spinner.add_key('quit', 'q,Q - quit the app', category='action', keys={ord('Q'), ord('q')})
+        spinner.add_key('quit', 'q,ctl-c - quit the app', category='action', keys={0x3, ord('q')})
 
-        self.win = ConsoleWindow(head_line=True, keys=spinner.keys)
+        self.win = ConsoleWindow(head_line=True, keys=spinner.keys, ctrl_c_terminates=False)
         self.win.opt_return_if_pos_change = True
         
     def _get_enums_checks(self):
@@ -87,7 +99,7 @@ class GrubPal:
             header += ' [e]dit'
 
         guide = 'UIDE' if self.spins.guide else 'uide'
-        header += f' [g]{guide} [q]uit'
+        header += f' [g]{guide} ?:help [q]uit'
         self.win.add_header(header)
 
     def adjust_picked_pos(self):
@@ -168,6 +180,51 @@ class GrubPal:
         if over > 0:
             win.scroll_pos += over # scroll back by number of out-of-view lines
 
+    def edit_param(self, win, name, checks):
+        """ Prompt user for answer until gets it right"""
+        value = self.param_values[name]
+        valid = False
+        hint, pure_regex = '', ''
+        for key, check in checks.items():
+            if key == 'regex':
+                pure_regex = check.encode().decode('unicode_escape')
+                hint += f'  pat={pure_regex}'
+            else:
+                hint += f'  {key}={check}'
+        hint = hint[2:]
+
+        while not valid:
+            prompt = f'Edit {name} [{hint}]'
+            value = win.answer(prompt=prompt, seed=str(value), esc_abort=True)
+            if value is None: # aborted
+                return
+            valid = True # until proven otherwise
+            for key, check in checks.items():
+                if key == 'regex':
+                    if not re.match(check, str(value)):
+                        valid, hint = False, f'must match: {pure_regex}'
+                        break
+                elif key in ['min', 'max']:
+                    ival = value
+                    if isinstance(check, int):
+                        try:
+                            ival = int(value)
+                        except Exception:
+                            valid, hint = False, 'must be int'
+                            break
+                    else:
+                        assert isinstance(check, str), f'Check {key} must be int or str'
+                    if key == 'min' and ival < check:
+                        valid, hint = False, f'must be >= {check}'
+                        break
+                    if key == 'max' and ival > check:
+                        valid, hint = False, f'must be <= {check}'
+                        break
+                else:
+                    assert False, f'Unknown check key: {key}'
+
+        self.param_values[name] = value
+
     def main_loop(self):
         """ TBD """
         assert self.parsed.get_etc_default_grub()
@@ -205,11 +262,7 @@ class GrubPal:
                 if spins.edit:
                     spins.edit = False
                     if checks:
-                        value = self.param_values[name]
-                        prompt = f'Edit {name}: {checks}'
-                        value = win.answer(prompt=prompt, seed=str(value))
-                        # TODO: validate answer and loop if needed
-                        self.param_values[name] = value
+                        self.edit_param(win, name, checks)
 
 
             win.clear()
