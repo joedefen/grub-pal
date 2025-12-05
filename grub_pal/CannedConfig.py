@@ -49,9 +49,9 @@ Timeout & Menu:
       0: The first entry in the menu (usually the latest OS).
       saved: The last operating system successfully booted.
     guidance: "Sets the default menu entry to boot. Can be:
-      \n - An index number (starting from 0).
-      \n - The keyword 'saved' to remember the last choice.
-      \n - A full menu entry title (case-sensitive)."
+      \n. An index number (starting from 0).
+      \n. The keyword 'saved' to remember the last choice.
+      \n. A full menu entry title (case-sensitive)."
     checks:
       regex: ^\d+$|^saved$|^[^\s].*$ # Matches number, 'saved', or a non-empty string
     specials:
@@ -73,34 +73,34 @@ Timeout & Menu:
 
 Kernel Arguments:
   GRUB_CMDLINE_LINUX:
-    default: ''
+    default: '""'
     enums: {}
     guidance: "Arguments passed to the Linux kernel ONLY on normal boot (not recovery).
-      \n- Typical uses: video options, disabling specific drivers, or custom parameters.
-      \n- Values here are combined with GRUB_CMDLINE_LINUX_DEFAULT."
+      \n. Typical uses: video options, disabling specific drivers, or custom parameters.
+      \n. Values here are combined with GRUB_CMDLINE_LINUX_DEFAULT."
     checks: []
     specials: []
 
   GRUB_CMDLINE_LINUX_DEFAULT:
     section: Kernel Arguments
-    default: "quiet splash"
+    default: '"quiet splash"'
     enums:
       "quiet splash": Default Ubuntu/Debian setting (hides boot messages).
       "": Show all boot messages (no options).
       "text": Force text mode display.
       "nomodeset": Disable kernel mode setting (useful for graphics troubleshooting).
     guidance: "Arguments passed to the Linux kernel for all boot entries (normal and recovery).
-      \n- Used for system-wide options.
-      \n- Separate multiple options with a space.
-      \n- Values here are combined with GRUB_CMDLINE_LINUX."
+      \n. Used for system-wide options.
+      \n. Separate multiple options with a space.
+      \n. Values here are combined with GRUB_CMDLINE_LINUX."
     checks: []
     specials: []
 
   GRUB_DISABLE_LINUX_UUID:
     default: 'false'
     enums:
-      'true': Use device names (e.g., /dev/sda1) instead of UUIDs.
       'false': Use UUIDs (Recommended - less prone to breaking when disks are moved).
+      'true': Use device names (e.g., /dev/sda1) instead of UUIDs.
     guidance: "Setting to 'true' stops GRUB from using the unique disk UUID
       (Universal Unique Identifier) for the root filesystem.
       \n%ENUMS%"
@@ -110,8 +110,8 @@ Kernel Arguments:
   GRUB_DISABLE_OS_PROBER:
     default: 'false'
     enums:
-      'true': Do not search for other operating systems.
       'false': Search for and automatically add other operating systems to the menu.
+      'true': Do not search for other operating systems.
     guidance: "Setting to 'true' prevents GRUB from automatically scanning other partitions
       for installed operating systems (like Windows, other Linux distros)
       and adding them to the boot menu.
@@ -124,8 +124,9 @@ Appearance:
     default: ''
     enums: {}
     guidance: "Full path and filename to a background image.
-      \n- Must be a JPEG or PNG file. Recommended size is screen resolution.
-      \n- Leave blank for no background image."
+      \n. Must be a JPEG or PNG file path.
+      \n. Recommended size is screen resolution.
+      \n. Leave blank for no background image."
     checks:
       regex: ^/.*(\.png|\.jpg|\.jpeg)$|^$ # Must be a file path ending in an image extension, or empty
     specials: []
@@ -134,8 +135,8 @@ Appearance:
     default: $(lsb_release -i -s)
     enums: {}
     guidance: "Sets the visible name of the operating system in the boot menu.
-      \n- By default, it uses the Linux Standard Base (LSB) name (e.g., 'Ubuntu').
-      \n- nSet to a custom string to change the display name."
+      \n. By default, it uses the Linux Standard Base (LSB) name (e.g., 'Ubuntu').
+      \n. nSet to a custom string to change the display name."
     checks: []
     specials: []
 
@@ -147,8 +148,8 @@ Appearance:
       "1024x768": Common monitor resolution.
       "auto": Choose the highest available resolution for your display.
     guidance: "Sets the resolution for the GRUB menu display.
-      \n- Use 'auto' to let GRUB pick the best available mode for your monitor.
-      \n- Separate multiple preferred resolutions with commas (e.g., 1024x768,auto)."
+      \n. Use 'auto' to let GRUB pick the best available mode for your monitor.
+      \n. Separate multiple preferred resolutions with commas (e.g., 1024x768,auto)."
     checks:
       regex: ^(auto|\d+x\d+)(,\s*(auto|\d+x\d+))*$
     specials: []
@@ -157,7 +158,7 @@ Appearance:
     default: ''
     enums: {}
     guidance: "Path to the theme.txt file for a custom GRUB theme.
-      \n- This overrides the background image setting (GRUB_BACKGROUND)."
+      \n. This overrides the background image setting (GRUB_BACKGROUND)."
     checks:
       regex: ^/.*theme\.txt$|^$ # Must be a file path ending in theme.txt, or empty
     specials: []
@@ -166,8 +167,8 @@ Security & Advanced:
   GRUB_ENABLE_CRYPTODISK:
     default: 'false'
     enums:
-      'true': Enable detection and unlocking of encrypted drives (e.g., LUKS).
       'false': Disable encrypted disk support.
+      'true': Enable detection and unlocking of encrypted drives (e.g., LUKS).
     guidance: "Enables GRUB to unlock encrypted disks to access
       GRUB files and the boot partition which is
       needed for systems with full disk encryption.

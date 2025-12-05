@@ -44,6 +44,7 @@ class GrubPal:
         self.param_names = list(self.params.keys())
         self.param_values = {}
         self.parsed = GrubParser(params=self.param_names)
+        self.parsed.get_etc_default_grub()
         name_wid = 0
         for param_name in self.param_names:
             name_wid = max(name_wid, len(param_name))
