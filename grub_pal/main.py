@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
 TODO:
- - menu entry management (complex)
-    - Parse top-level menuentry lines
-    - Filter out memtest/firmware entries
-    - Extract titles and show with indices
-    - Add a one-line warning about potential changes
+ - backup grub feature
+   - backups of /etc/default/grub will be put in ~/.config/grub-pal
+   - they will look like:  YYYYMMDD.HHMMSS.{8-hex-digit-checksum}.{tag}.txt
+   - if there are none, on startup create one with tag=orig
+   - else check the current checksum against the list, if not there prompt
+     to backup the grub file with a given tag: default=custom (tags may not have spaces or crazy chars like "/")
+   - there will be a [r]estore menu item that brings up a new screen which is a list of backups; you can delete entries or restore entries
+   - if an entry is restored, the program reinits vs the new grub file and returns to edit screen
  - [w]rite command (start of at least)
  - launch/discover grub-update or whatever
  - writing YAML into .config directory and read it first (allow user extension)
@@ -35,6 +38,7 @@ from .ConsoleWindowCopy import OptionSpinner, ConsoleWindow
 from .CannedConfig import CannedConfig
 from .GrubParser import GrubParser
 from .GrubCfgParser import get_top_level_grub_entries
+from .BackupMgr import BackupMgr, GRUB_DEFAULT_PATH
 
 class GrubPal:
     """ TBD """
@@ -45,10 +49,23 @@ class GrubPal:
         self.guide = 'Full' # None Brief Full
         self.spinner = None
         self.spins = None
-        self.sections = CannedConfig().data
+        self.sections = None
         self.params = {}
         self.positions = []
-        self.prev_pos = -1024  # to detect direction
+        self.mode = 'usual'  # 'restore
+        self.prev_pos = None
+        self.param_names = None
+        self.param_values = {}
+        self.parsed = None
+        self.param_name_wid = 0
+        self.menu_entries = None
+        self.backup_mgr = BackupMgr()
+        self.backups = None
+        self._reinit()
+        
+    def _reinit(self):
+        """ Call to initialize or re-initialize with new /etc/default/grub """
+        self.sections = CannedConfig().data
         for idx, (section, params) in enumerate(self.sections.items()):
             if idx > 0: # blank line before sections except 1st
                 self.positions.append( SimpleNamespace(
@@ -60,9 +77,11 @@ class GrubPal:
                 self.positions.append(SimpleNamespace(
                     param_name=param_name, section_name=None))
         self.param_names = list(self.params.keys())
-        self.param_values = {}
+
         self.parsed = GrubParser(params=self.param_names)
         self.parsed.get_etc_default_grub()
+        self.prev_pos = -1024  # to detect direction
+
         name_wid = 0
         for param_name in self.param_names:
             name_wid = max(name_wid, len(param_name))
@@ -71,11 +90,13 @@ class GrubPal:
                 value = self.params[param_name]['default']
             self.param_values[param_name] = value
         self.param_name_wid = name_wid - len('GRUB_')
+
         self.menu_entries = get_top_level_grub_entries()
         try:
             self.params['GRUB_DEFAULT']['enums'].update(self.menu_entries)
         except Exception:
             pass
+        self.mode = 'usual'  # 'restore
     
     def setup_win(self):
         """TBD """
@@ -85,6 +106,9 @@ class GrubPal:
         spinner.add_key('cycle', 'c - next value in cycle', category='action')
         spinner.add_key('edit', 'e - edit value', category='action')
         spinner.add_key('guide', 'g - guidance toggle', vals=[True, False])
+        spinner.add_key('enter_restore', 'R - enter restore screen', category='action')
+        spinner.add_key('restore', 'r - restore selected backup [in restore screen]', category='action')
+        spinner.add_key('delete', 'd - delete selected backup [in restore screen]', category='action')
         spinner.add_key('quit', 'q,ctl-c - quit the app', category='action', keys={0x3, ord('q')})
 
         self.win = ConsoleWindow(head_line=True, keys=spinner.keys, ctrl_c_terminates=False)
@@ -99,6 +123,18 @@ class GrubPal:
         enums = params.get('enums', None)
         checks = params.get('checks', None)
         return param_name, params, enums, checks
+
+    def add_restore_head(self):
+        """ TBD """
+        header = '[d]elete [r]estore ?:help [q]uit'
+        self.win.add_header(header)
+
+    def add_restore_body(self):
+        """ TBD """
+        paths = list(self.backups.values())
+        paths.sort(reverse=True)
+        for path in paths:
+            self.win.add_body(path.name)
         
     def add_guided_head(self):
         """ TBD"""
@@ -110,7 +146,7 @@ class GrubPal:
             header += ' [e]dit'
 
         guide = 'UIDE' if self.spins.guide else 'uide'
-        header += f' [g]{guide} ?:help [q]uit'
+        header += f' [g]{guide} [R]estore ?:help [q]uit'
         self.win.add_header(header)
 
     def adjust_picked_pos(self):
@@ -236,20 +272,51 @@ class GrubPal:
                     assert False, f'Unknown check key: {key}'
 
         self.param_values[name] = value
+        
+
+    def do_start_up_backup(self):
+        """ On startup
+            - install the "orig" backup of none
+            - offer to install any uniq backup
+        """
+        self.backups = self.backup_mgr.get_backups()
+        checksum = self.backup_mgr.calc_checksum(GRUB_DEFAULT_PATH)
+        if not self.backups:
+            self.backup_mgr.create_backup('orig')
+
+        elif checksum not in self.backups:
+            regex = r'^[_A-Za-z0-9]+$'
+            hint = 'regex={regex}'
+            while True:
+                answer = self.win.answer(esc_abort=True, seed='custom',
+                    prompt=fr"Enter a tag to back up {GRUB_DEFAULT_PATH} [{hint}]]")
+                if answer is None:
+                    break
+                answer = answer.strip()
+                if re.match(regex, answer):
+                    self.backup_mgr.create_backup(GRUB_DEFAULT_PATH)
+                    break
 
     def main_loop(self):
         """ TBD """
         assert self.parsed.get_etc_default_grub()
+        seconds = 3.0
+        
+        self.do_start_up_backup()
         self.setup_win()
         win, spins = self.win, self.spins # shorthand
-        seconds = 3.0
         
         while True:
             if spins.help_mode:
                 win.set_pick_mode(False)
                 self.spinner.show_help_nav_keys(win)
                 self.spinner.show_help_body(win)
-            else:
+            elif self.mode == 'restore':
+                win.set_pick_mode(True)
+                self.add_restore_head()
+                self.add_restore_body()
+
+            else: # normal mode
                 win.set_pick_mode(True)
                 self.add_guided_head()
                 self.add_guided_body()
@@ -260,7 +327,10 @@ class GrubPal:
                 self.spinner.do_key(key, win)
                 if spins.quit:
                     spins.quit = False
-                    break
+                    if self.mode == 'restore':
+                        self.mode = 'normal'
+                    else:
+                        break
 
                 name, _, enums, checks = self._get_enums_checks()
                 if spins.cycle:
@@ -275,6 +345,20 @@ class GrubPal:
                     spins.edit = False
                     if checks:
                         self.edit_param(win, name, checks)
+
+                if spins.enter_restore:
+                    spins.enter_restore = False
+                    if self.mode != 'restore':
+                        self.mode = 'restore'
+                        self.backups = self.backup_mgr.get_backups()
+
+                if spins.restore:
+                    spins.restore = False
+                    # TODO
+
+                if spins.delete:
+                    spins.delete = False
+                    # TODO
 
 
             win.clear()
