@@ -62,7 +62,7 @@ class GrubParser:
                 else:
                     self.other_lines += block_lines
                 block_lines = []
-            else:
+            elif not line.startswith('#--#'): # strip "our" comments
                 block_lines.append(line)
         self.other_lines += block_lines
 

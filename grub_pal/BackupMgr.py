@@ -137,6 +137,8 @@ class BackupMgr:
 
         try:
             shutil.copy2(backup_file, destination)
+            os.chmod(destination, 0o644)
+
             print(f"Success: Restored {backup_file.name} to {destination}")
             return True
         except Exception as e:

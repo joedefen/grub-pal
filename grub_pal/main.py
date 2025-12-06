@@ -31,6 +31,7 @@ from .CannedConfig import CannedConfig
 from .GrubParser import GrubParser
 from .GrubCfgParser import get_top_level_grub_entries
 from .BackupMgr import BackupMgr, GRUB_DEFAULT_PATH
+from .GrubWriter import commit_validated_grub_config, run_grub_update
 
 class GrubPal:
     """ TBD """
@@ -53,6 +54,7 @@ class GrubPal:
         self.menu_entries = None
         self.backup_mgr = BackupMgr()
         self.backups = None
+        self.ordered_backup_pairs = None
         self._reinit()
         
     def _reinit(self):
@@ -124,10 +126,8 @@ class GrubPal:
 
     def add_restore_body(self):
         """ TBD """
-        paths = list(self.backups.values())
-        paths.sort(reverse=True)
-        for path in paths:
-            self.win.add_body(path.name)
+        for pair in self.ordered_backup_pairs:
+            self.win.add_body(pair[1].name)
         
     def add_guided_head(self):
         """ TBD"""
@@ -273,30 +273,61 @@ class GrubPal:
             - offer to install any uniq backup
         """
         self.backups = self.backup_mgr.get_backups()
+        self.ordered_backup_pairs = sorted(self.backups.items(),
+                           key=lambda item: item[1], reverse=True)
         checksum = self.backup_mgr.calc_checksum(GRUB_DEFAULT_PATH)
         if not self.backups:
             self.backup_mgr.create_backup('orig')
 
         elif checksum not in self.backups:
-            regex = r'^[_A-Za-z0-9]+$'
-            hint = 'regex={regex}'
+            regex = r'^[-_A-Za-z0-9]+$'
+            hint = f'regex={regex}'
             while True:
                 answer = self.win.answer(esc_abort=True, seed='custom',
-                    prompt=fr"Enter a tag to back up {GRUB_DEFAULT_PATH} [{hint}]]")
+                    prompt=f"Enter a tag to back up {GRUB_DEFAULT_PATH} [{hint}]]")
                 if answer is None:
                     break
                 answer = answer.strip()
                 if re.match(regex, answer):
-                    self.backup_mgr.create_backup(GRUB_DEFAULT_PATH)
+                    self.backup_mgr.create_backup(answer)
                     break
+
+    def update_grub(self):
+        """ TBD """
+        contents =  "#--# NOTE: this file was built with 'grub-pal'\n"
+        contents += "#--#     - We suggest updating the following params with 'grub-pal'\n"
+        contents += "#--#       although not required'\n"
+        for name, value in self.param_values.items():
+            contents += f'{name}={value}\n'
+        contents += "#--# NOTE: following are params NOT handled by 'grub-pal'\n"
+        contents += "#--#     - update these manually.\n\n"
+        contents += ''.join(self.parsed.other_lines)
+        
+        self.win.stop_curses()
+        # print('Check for correctness...')
+        # print('-'*60)
+        # print(contents)
+        # print('-'*60)
+        commit_rv = commit_validated_grub_config(contents)
+        if not commit_rv[0]: # failure
+            print(commit_rv[1])
+        else:
+            install_rv = run_grub_update()
+            if install_rv[0]:
+                print(install_rv[1])
+        input('\n\n===== Press ENTER to return to grub-pal ====> ')
+
+        self.win._start_curses()
+        self._reinit()
+        self.do_start_up_backup()
 
     def main_loop(self):
         """ TBD """
         assert self.parsed.get_etc_default_grub()
         seconds = 3.0
         
-        self.do_start_up_backup()
         self.setup_win()
+        self.do_start_up_backup()
         win, spins = self.win, self.spins # shorthand
         
         while True:
@@ -309,7 +340,7 @@ class GrubPal:
                 self.add_restore_head()
                 self.add_restore_body()
 
-            else: # normal mode
+            else: # usual mode
                 win.set_pick_mode(True)
                 self.add_guided_head()
                 self.add_guided_body()
@@ -321,14 +352,14 @@ class GrubPal:
                 if spins.quit:
                     spins.quit = False
                     if self.mode == 'restore':
-                        self.mode = 'normal'
+                        self.mode = 'usual'
                     else:
                         break
 
                 name, _, enums, checks = self._get_enums_checks()
                 if spins.cycle:
                     spins.cycle = False
-                    if enums:
+                    if self.mode == 'usual' and enums:
                         value = self.param_values[name]
                         choices = list(enums.keys())
                         idx = choices.index(value) if value in choices else -1
@@ -336,18 +367,30 @@ class GrubPal:
                         self.param_values[name] = value
                 if spins.edit:
                     spins.edit = False
-                    if checks:
+                    if self.mode == 'usual' and checks:
                         self.edit_param(win, name, checks)
+                        
+                if spins.write:
+                    spins.write = False
+                    if self.mode == 'usual':
+                        self.update_grub()
 
                 if spins.enter_restore:
                     spins.enter_restore = False
                     if self.mode != 'restore':
                         self.mode = 'restore'
-                        self.backups = self.backup_mgr.get_backups()
+                        self.do_start_up_backup()
 
                 if spins.restore:
                     spins.restore = False
-                    # TODO
+                    if self.mode == 'restore':
+                        idx = self.win.pick_pos
+                        if 0 <= idx < len(self.ordered_backup_pairs):
+                            key = self.ordered_backup_pairs[idx][0]
+                            self.backup_mgr.restore_backup(self.backups[key])
+                            self.mode = 'usual'
+                            self._reinit()
+                            self.do_start_up_backup()
 
                 if spins.delete:
                     spins.delete = False

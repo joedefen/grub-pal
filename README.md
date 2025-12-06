@@ -86,3 +86,42 @@ Backup and restore features:
     * Foundation: Built upon the robust console-window curses foundation.
     * Current State: Initial feature development and safety implementation.
     * Contributions: Contributions are welcome! See the CONTRIBUTING.md for guidelines.
+
+## Appendix
+#### Essential Linux Kernel Parameters (GRUB Arguments)
+
+These are the arguments that get passed directly to the Linux kernel during the boot process.
+Parameter	Purpose & When to Use It	Example Use Case
+
+* quiet
+  * Boot Output Control: Suppresses most kernel startup messages, making the boot process appear cleaner and faster (often used with splash).
+  * Default setting on most consumer distributions.
+* splash
+  * Visual Boot: Tells the kernel to display a graphical boot screen (e.g., the Ubuntu or Fedora logo) instead of raw text output.
+  * Default setting for an aesthetic desktop experience.
+* nomodeset
+  * Graphics Troubleshooting: Crucial for fixing black screens or corrupted graphics.
+  * It forces the kernel to skip loading video drivers and use basic VESA graphics initially, often allowing you to boot into the desktop to install proper proprietary drivers.	Use when the system freezes or shows a black screen after kernel loading.
+* init=/bin/bash
+  * Emergency Shell: Replaces the standard /sbin/init or /usr/lib/systemd/systemd process with a simple Bash shell, giving you immediate root access to the system for repair.
+  * Use when you forget your root password or the system fails to boot into runlevels.
+* ro or rw
+  * Root Filesystem Mode: ro mounts the root filesystem as Read-Only initially (standard for safety, as the initramfs will remount it rw later). rw forces it to mount Read-Write immediately.
+  * ro is the safer, common default. Change to rw only if explicitly needed for early-boot modifications.
+* single or 1
+  * Single-User Mode (Rescue): Boots the system to a minimal state, usually without networking or graphical interfaces, often requiring the root password.
+  * This is ideal for system maintenance.	Use for maintenance or recovery, especially when networking or services are causing issues.
+* systemd.unit=multi-user.target
+  * Bypass Graphical Login: Forces the system to boot to a command-line terminal login instead of the graphical desktop (skipping graphical.target).
+  * Use when GUI problems prevent login or you want a server-like environment.
+* noapic or acpi=off
+  * Hardware Compatibility (Legacy): Disables the Advanced Programmable Interrupt Controller (noapic) or the Advanced Configuration and Power Interface (acpi=off).
+  * These are extreme measures for very old or extremely non-compliant hardware that hangs during boot.	Use as a last resort when the kernel hangs while initializing hardware components.
+* rhgb
+  * Red Hat Graphical Boot: Similar to splash, but specifically used by Red Hat/Fedora systems to control their graphical boot experience.
+  * Used primarily on RHEL, CentOS, or Fedora distributions.
+
+
+The authoritative source for all kernel command-line parameters is the official Linux kernel documentation. Since parameters can change between major kernel versions, this is always the best place to check for advanced or very specific options:
+
+Official Linux Kernel Documentation (Current): Search for the `kernel-parameters.rst` document in the official kernel git repository. A common link to this documentation is the `kernel-command-line(7)` manual page, which is linked to the online documentation.

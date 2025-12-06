@@ -121,7 +121,8 @@ def commit_validated_grub_config(
     1. Write contents to a secure temporary file.
     2. Run 'grub-script-check' on the temporary file.
     3. If validation succeeds, copy the temporary file over the target_path.
-    4. If validation fails, delete the temporary file and return the error.
+    4. Explicitly set permissions to 644 (rw-r--r--) for security and readability.
+    5. If validation fails, delete the temporary file and return the error.
     
     NOTE: The caller should call run_grub_update() immediately after this function 
     if commit is successful.
@@ -177,7 +178,12 @@ def commit_validated_grub_config(
         # --- Step 3: Commit/Copy the Validated File ---
         shutil.copy2(temp_path, target_path)
         
-        return True, f"Success! Validated contents committed to {target_path}. GRUB rebuild is the next required step."
+        # --- Step 4: Explicitly set permissions to 644 (rw-r--r--) ---
+        # This guarantees the standard permissions for /etc/default/grub
+        # The octal '0o644' means: owner (6=rw-), group (4=r--), others (4=r--)
+        os.chmod(target_path, 0o644)
+
+        return True, f"Success! Validated contents committed to {target_path} with mode 644. GRUB rebuild is the next required step."
 
     except FileNotFoundError:
         return False, f"Error: Required utility '{GRUB_CHECK_COMMAND}' not found. Please ensure GRUB is correctly installed."
@@ -189,7 +195,7 @@ def commit_validated_grub_config(
         return False, f"An unexpected error occurred during commit: {e}"
 
     finally:
-        # --- Step 4: Clean up the temporary file ---
+        # --- Step 5: Clean up the temporary file ---
         if temp_file and os.path.exists(temp_file.name):
             try:
                 os.unlink(temp_file.name)
