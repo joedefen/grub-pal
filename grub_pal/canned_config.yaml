@@ -20,18 +20,19 @@ Timeout & Menu:
     enums:
       menu: Show the full menu during the timeout period.
       countdown: Show a countdown display instead of the menu.
-      hidden: Menu is hidden until a key is pressed.
+      hidden: Hide Menu until any key is pressed (also set HIDDEN_TIMEOUT)
     guidance: "What to show during TIMEOUT period. Choices:
       \n%ENUMS%"
     checks: []
-    specials: []
+    specials:
+      - 'hidden_requires_hidden_timeout'
 
   GRUB_DEFAULT:
     section: Timeout & Menu
     default: 0
     enums:
-      0: The first entry in the menu (usually the latest OS).
-      saved: The last operating system successfully booted.
+      0: Boot first menu entry (usually the latest OS).
+      saved: Boot previously booted OS (ensure SAVEDDEFAULT is true)
     guidance: "Sets the default menu entry to boot. Can be:
       \n: An index number (starting from 0).
       \n: A full menu entry title (case-sensitive).
@@ -40,6 +41,33 @@ Timeout & Menu:
       regex: ^\d+$|^saved$|^[^\s].*$ # Matches number, 'saved', or a non-empty string
     specials:
       - 'get_menu_entries' # Flag to suggest dynamically fetching available entries
+      - 'saved_requires_savedefault'
+
+  GRUB_HIDDEN_TIMEOUT:
+    default: ''
+    enums:
+      '': Not set (disabled).
+      0: No hidden timeout - show menu immediately.
+      3: Brief hidden countdown before showing menu.
+      5: Medium hidden countdown before showing menu.
+    guidance: "Delay (in seconds) before showing the menu when GRUB_TIMEOUT_STYLE='hidden'.
+      \n: Leave blank if not using hidden timeout.
+      \n%ENUMS%"
+    checks:
+      regex: ^\d+$|^$
+      min: 0
+    specials: []
+
+  GRUB_SAVEDEFAULT:
+    default: 'false'
+    enums:
+      'false': Do not automatically save the last booted entry.
+      'true': Save the last booted entry as the new default.
+    guidance: "Automatically saves the last selected menu entry as the new default.
+      \n: Required when GRUB_DEFAULT='saved'.
+      \n%ENUMS%"
+    checks: []
+    specials: []
 
   GRUB_RECORDFAIL_TIMEOUT:
     section: Timeout & Menu
@@ -80,16 +108,16 @@ Kernel Arguments:
       regex: ^"\.*"$
     specials: []
 
-  GRUB_DISABLE_LINUX_UUID:
-    default: 'false'
-    enums:
-      'false': Use UUIDs (Recommended - less prone to breaking when disks are moved).
-      'true': Use device names (e.g., /dev/sda1) instead of UUIDs.
-    guidance: "Setting to 'true' stops GRUB from using the unique disk UUID
-      (Universal Unique Identifier) for the root filesystem.
-      \n%ENUMS%"
-    checks: []
-    specials: []
+# GRUB_DISABLE_LINUX_UUID:
+#   default: 'false'
+#   enums:
+#     'false': Use UUIDs (Recommended - less prone to breaking when disks are moved).
+#     'true': Use device names (e.g., /dev/sda1) instead of UUIDs.
+#   guidance: "Setting to 'true' stops GRUB from using the unique disk UUID
+#     (Universal Unique Identifier) for the root filesystem.
+#     \n%ENUMS%"
+#   checks: []
+#   specials: []
 
   GRUB_DISABLE_OS_PROBER:
     default: 'false'
@@ -115,14 +143,14 @@ Appearance:
       regex: ^/.*(\.png|\.jpg|\.jpeg)$|^$ # Must be a file path ending in an image extension, or empty
     specials: []
 
-  GRUB_DISTRIBUTOR:
-    default: $(lsb_release -i -s)
-    enums: {}
-    guidance: "Sets the visible name of the operating system in the boot menu.
-      \n: By default, it uses the Linux Standard Base (LSB) name (e.g., 'Ubuntu').
-      \n: Set to a custom string to change the display name."
-    checks: []
-    specials: []
+# GRUB_DISTRIBUTOR:
+#   default: $(lsb_release -i -s)
+#   enums: {}
+#   guidance: "Sets the visible name of the operating system in the boot menu.
+#     \n: By default, it uses the Linux Standard Base (LSB) name (e.g., 'Ubuntu').
+#     \n: Set to a custom string to change the display name."
+#   checks: []
+#   specials: []
 
   GRUB_GFXMODE:
     default: 640x480
@@ -160,12 +188,12 @@ Security & Advanced:
     checks: []
     specials: []
 
-  GRUB_TERMINAL_INPUT:
-    default: console
-    enums:
-      console: Use the standard terminal/monitor.
-      serial: Use a serial port for input.
-    guidance: "Defines the input device for the GRUB command line and menu.
-      \nMost desktop users should use 'console'."
-    checks: []
-    specials: []
+# GRUB_TERMINAL_INPUT:
+#   default: console
+#   enums:
+#     console: Use the standard terminal/monitor.
+#     serial: Use a serial port for input.
+#   guidance: "Defines the input device for the GRUB command line and menu.
+#     \nMost desktop users should use 'console'."
+#   checks: []
+#   specials: []
