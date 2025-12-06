@@ -12,181 +12,7 @@
   brief: {text} # < 60 char description
   full: {text} # < 400 char detailed explanation
 """
-
-YAML_STRING = r"""
-Timeout & Menu:
-  GRUB_TIMEOUT:
-    default: 5
-    enums:
-      -1: infinite wait
-      0: no wait
-      2: short wait
-      5: medium wait
-      15: healthy wait
-      60: long wait
-    guidance: "The timeout for the GRUB menu display.
-      \n%ENUMS%"
-    checks:
-      regex: ^-?\d+$
-      min: -1
-    specials: []
-
-  GRUB_TIMEOUT_STYLE:
-    default: menu
-    enums:
-      menu: Show the full menu during the timeout period.
-      countdown: Show a countdown display instead of the menu.
-      hidden: Menu is hidden until a key is pressed.
-    guidance: "What to show during TIMEOUT period. Choices:
-      \n%ENUMS%"
-    checks: []
-    specials: []
-
-  GRUB_DEFAULT:
-    section: Timeout & Menu
-    default: 0
-    enums:
-      0: The first entry in the menu (usually the latest OS).
-      saved: The last operating system successfully booted.
-    guidance: "Sets the default menu entry to boot. Can be:
-      \n: An index number (starting from 0).
-      \n: A full menu entry title (case-sensitive).
-      \n%ENUMS%"
-    checks:
-      regex: ^\d+$|^saved$|^[^\s].*$ # Matches number, 'saved', or a non-empty string
-    specials:
-      - 'get_menu_entries' # Flag to suggest dynamically fetching available entries
-
-  GRUB_RECORDFAIL_TIMEOUT:
-    section: Timeout & Menu
-    default: 30
-    enums:
-      10: Short wait for error.
-      30: Default error wait.
-      60: Long wait for error.
-    guidance: "If the previous boot failed (e.g., kernel panic), GRUB shows a recovery menu.
-      \nThis sets the timeout (in seconds) for that specific recovery menu."
-    checks:
-      regex: ^\d+$
-      min: 0
-    specials: []
-
-Kernel Arguments:
-  GRUB_CMDLINE_LINUX:
-    section: Kernel Arguments
-    default: '""'
-    enums: {}
-    guidance: "Kernel arguments for ALL normal/recovery boots.
-      \n: Typical uses: video options, disabling specific drivers, or custom parameters.
-      \n: Separate multiple options with a space."
-    checks:
-      regex: ^"\.*"$
-    specials: []
-
-  GRUB_CMDLINE_LINUX_DEFAULT:
-    default: '"quiet splash"'
-    enums:
-      '"quiet splash"': Default Ubuntu/Debian setting (hides boot messages)
-      '"text"': Force text mode display early in boot process
-      '""': Verbose boot
-    guidance: "Kernel arguments ONLY only for normal boots (not recovery).
-      \n: Values here are combined with GRUB_CMDLINE_LINUX. Common settings:
-      \n%ENUMS%"
-    checks:
-      regex: ^"\.*"$
-    specials: []
-
-  GRUB_DISABLE_LINUX_UUID:
-    default: 'false'
-    enums:
-      'false': Use UUIDs (Recommended - less prone to breaking when disks are moved).
-      'true': Use device names (e.g., /dev/sda1) instead of UUIDs.
-    guidance: "Setting to 'true' stops GRUB from using the unique disk UUID
-      (Universal Unique Identifier) for the root filesystem.
-      \n%ENUMS%"
-    checks: []
-    specials: []
-
-  GRUB_DISABLE_OS_PROBER:
-    default: 'false'
-    enums:
-      'false': Search for and automatically add other operating systems to the menu.
-      'true': Do not search for other operating systems.
-    guidance: "Setting to 'true' prevents GRUB from automatically scanning other partitions
-      for installed operating systems (like Windows, other Linux distros)
-      and adding them to the boot menu.
-      \n%ENUMS%"
-    checks: []
-    specials: []
-
-Appearance:
-  GRUB_BACKGROUND:
-    default: ''
-    enums: {}
-    guidance: "Full path and filename to a background image.
-      \n: Must be a JPEG or PNG file path.
-      \n: Recommended size is screen resolution.
-      \n: Leave blank for no background image."
-    checks:
-      regex: ^/.*(\.png|\.jpg|\.jpeg)$|^$ # Must be a file path ending in an image extension, or empty
-    specials: []
-
-  GRUB_DISTRIBUTOR:
-    default: $(lsb_release -i -s)
-    enums: {}
-    guidance: "Sets the visible name of the operating system in the boot menu.
-      \n: By default, it uses the Linux Standard Base (LSB) name (e.g., 'Ubuntu').
-      \n: Set to a custom string to change the display name."
-    checks: []
-    specials: []
-
-  GRUB_GFXMODE:
-    default: 640x480
-    enums:
-      "640x480": Most widely available monitor resolution.
-      "800x600": Older standard monitor resolution.
-      "1024x768": Common contemporary monitor resolution.
-      "auto": Let GRUB choose a suitable monitor resolution.
-    guidance: "Sets the resolution for the GRUB menu display.
-      \n: Separate multiple desired resolutions with commas (e.g., 1024x768,auto).
-      \n%ENUMS%"
-    checks:
-      regex: ^(auto|\d+x\d+)(,\s*(auto|\d+x\d+))*$
-    specials: []
-
-  GRUB_THEME:
-    default: ''
-    enums: {}
-    guidance: "Path to the theme.txt file for a custom GRUB theme.
-      \n: This overrides the background image setting (GRUB_BACKGROUND)."
-    checks:
-      regex: ^/.*theme\.txt$|^$ # Must be a file path ending in theme.txt, or empty
-    specials: []
-
-Security & Advanced:
-  GRUB_ENABLE_CRYPTODISK:
-    default: 'false'
-    enums:
-      'false': Disable encrypted disk support.
-      'true': Enable detection and unlocking of encrypted drives (e.g., LUKS).
-    guidance: "Enables GRUB to unlock encrypted disks to access
-      GRUB files and the boot partition which is
-      needed for systems with full disk encryption.
-      \n%ENUMS%"
-    checks: []
-    specials: []
-
-  GRUB_TERMINAL_INPUT:
-    default: console
-    enums:
-      console: Use the standard terminal/monitor.
-      serial: Use a serial port for input.
-    guidance: "Defines the input device for the GRUB command line and menu.
-      \nMost desktop users should use 'console'."
-    checks: []
-    specials: []
-"""
-
+from importlib.resources import files
 from ruamel.yaml import YAML
 
 yaml = YAML()
@@ -196,7 +22,13 @@ yaml.default_flow_style = False
 class CannedConfig:
     """ TBD"""
     def __init__(self):
-        self.data = yaml.load(YAML_STRING)
+        # 1. Get a Traversable object for the 'grub_pal' package directory
+        resource_path = files('grub_pal') / 'canned_config.yaml'
+        
+        # 2. Open the file resource for reading
+        # We use resource_path.read_text() to get the content as a string
+        yaml_string = resource_path.read_text()
+        self.data = yaml.load(yaml_string)
         
     def dump(self):
       """ Dump the wired/initial configuration"""
