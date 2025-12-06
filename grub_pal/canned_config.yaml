@@ -1,19 +1,3 @@
-#!/usr/bin/env
-"""
-{parameter-name}:
-  section: {TUI grouping}
-  type: {cycle | input | boolean | special_list} # Controls Curses interaction
-  default: {default value from GRUB docs}
-  enums: # list of values for 'type: cycle' or 'type: special_list'
-    - value: meaning
-  regex: {regex} # Optional, for 'type: input' validation
-  specials: # Optional, for 'type: special_list' population
-    - {special_key} # e.g., "get-res-list", "get-disk-uuid"
-  brief: {text} # < 60 char description
-  full: {text} # < 400 char detailed explanation
-"""
-
-YAML_STRING = r"""
 Timeout & Menu:
   GRUB_TIMEOUT:
     default: 5
@@ -185,28 +169,3 @@ Security & Advanced:
       \nMost desktop users should use 'console'."
     checks: []
     specials: []
-"""
-
-from ruamel.yaml import YAML
-
-yaml = YAML()
-yaml.preserve_quotes = True
-yaml.default_flow_style = False
-
-class CannedConfig:
-    """ TBD"""
-    def __init__(self):
-        self.data = yaml.load(YAML_STRING)
-        
-    def dump(self):
-      """ Dump the wired/initial configuration"""
-      string = yaml.dump(self.data)
-      print(string)
-
-def main():
-    """ TBD """
-    string = yaml.dump(config_data)
-    print(string)
-
-if __name__ == '__main__':
-    main()
