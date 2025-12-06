@@ -88,6 +88,15 @@ Backup and restore features:
     * Contributions: Contributions are welcome! See the CONTRIBUTING.md for guidelines.
 
 ## Appendix
+
+#### Running grub-pal at recovery time
+
+To leverage user-installed, `grub-pal` even in minimal recovery environment of grub recovery mode:
+1. Remount the root filesystem as Read-Write: `mount -o remount,rw /`
+2. Execute grub-pal using its full path: `/home/{username}/.local/bin/grub-pal`
+3. Make changes as needed, and "write" them to update the boot instructions.
+
+
 #### Essential Linux Kernel Parameters (GRUB Arguments)
 
 These are the arguments that get passed directly to the Linux kernel during the boot process.
