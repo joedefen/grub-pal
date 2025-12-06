@@ -70,12 +70,12 @@ def run_grub_update() -> Tuple[bool, str]:
         A tuple (success: bool, message: str)
     """
     if os.geteuid() != 0:
-        return False, "Permission Error: Root access is required to run the GRUB update command."
+        return False, "ERROR: root required to run GRUB update command"
 
     command_name, output_path = _find_grub_update_command()
 
     if not command_name:
-        return False, "Fatal Error: No known GRUB configuration update utility (update-grub, grub-mkconfig, or grub2-mkconfig) was found on the system PATH."
+        return False, "ERROR: cannot find GRUB updater (update-grub, grub-mkconfig, and grub2-mkconfig) not on $PATH"
 
     # Build the command array
     command_to_run: List[str] = [command_name]
@@ -84,8 +84,7 @@ def run_grub_update() -> Tuple[bool, str]:
         # If using grub-mkconfig or grub2-mkconfig, we must provide the output flag and path
         command_to_run.extend(["-o", str(output_path)])
         
-    print(f"Executing GRUB update command: {' '.join(command_to_run)}", file=sys.stderr)
-
+    print(f"+  {' '.join(command_to_run)}")
     try:
         # Execute the command
         result = subprocess.run(
@@ -104,7 +103,8 @@ def run_grub_update() -> Tuple[bool, str]:
                 f"{error_output}"
             )
 
-        return True, f"GRUB Configuration successfully rebuilt using {command_name}.\nOutput:\n{result.stdout.strip()}"
+        print(f"OK: GRUB config rebuilt: Output:\n{result.stdout.strip()}")
+        return True, 'OK'
 
     except Exception as e:
         return False, f"An unexpected error occurred during GRUB update execution: {e}"
@@ -157,10 +157,12 @@ def commit_validated_grub_config(
         
         # --- Step 2: Run grub-script-check Validation ---
         
-        command = [GRUB_CHECK_COMMAND, str(temp_path)]
+        cmd = [GRUB_CHECK_COMMAND, str(temp_path)]
+        
+        print(f'+ {cmd[0]} {cmd[1]!r}')
         
         result = subprocess.run(
-            command,
+            cmd,
             capture_output=True,
             text=True,
             check=False 
@@ -169,13 +171,14 @@ def commit_validated_grub_config(
         if result.returncode != 0:
             error_output = result.stdout.strip() + "\n" + result.stderr.strip()
             return False, (
-                f"Validation Failed: {GRUB_CHECK_COMMAND} returned an error.\n"
+                f"FAILED: {GRUB_CHECK_COMMAND} returned {result.returncode}.\n"
                 f"Your changes were NOT saved to {target_path}.\n"
                 f"---------------------------------------------------\n"
                 f"{error_output}"
             )
 
         # --- Step 3: Commit/Copy the Validated File ---
+        print(f'+ cp {temp_path!r} {target_path!r}')
         shutil.copy2(temp_path, target_path)
         
         # --- Step 4: Explicitly set permissions to 644 (rw-r--r--) ---
@@ -183,7 +186,7 @@ def commit_validated_grub_config(
         # The octal '0o644' means: owner (6=rw-), group (4=r--), others (4=r--)
         os.chmod(target_path, 0o644)
 
-        return True, f"Success! Validated contents committed to {target_path} with mode 644. GRUB rebuild is the next required step."
+        return True, f"OK: replaced {target_path!r}"
 
     except FileNotFoundError:
         return False, f"Error: Required utility '{GRUB_CHECK_COMMAND}' not found. Please ensure GRUB is correctly installed."

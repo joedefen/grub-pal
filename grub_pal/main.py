@@ -139,7 +139,7 @@ class GrubPal:
             header += ' [e]dit'
 
         guide = 'UIDE' if self.spins.guide else 'uide'
-        header += f' [g]{guide} [R]estore ?:help [q]uit'
+        header += f' [g]{guide} [w]rite [R]estore ?:help [q]uit'
         self.win.add_header(header)
 
     def adjust_picked_pos(self):
@@ -148,8 +148,12 @@ class GrubPal:
           - the 1st entry is a section name
           - the last entry is NOT a section name
         """
-        win = self.win
+        win, spins = self.win, self.spins # shorthand
         pos = win.pick_pos
+
+        if self.mode != 'usual' or spins.help_mode:
+            return pos
+
         pos = max(min(len(self.positions)-1, pos), 1)
         if pos == win.pick_pos and pos == self.prev_pos:
             return pos
@@ -267,14 +271,17 @@ class GrubPal:
         self.param_values[name] = value
         
 
+    def refresh_backup_list(self):
+        """ TBD """
+        self.backups = self.backup_mgr.get_backups()
+        self.ordered_backup_pairs = sorted(self.backups.items(),
+                           key=lambda item: item[1], reverse=True)
     def do_start_up_backup(self):
         """ On startup
             - install the "orig" backup of none
             - offer to install any uniq backup
         """
-        self.backups = self.backup_mgr.get_backups()
-        self.ordered_backup_pairs = sorted(self.backups.items(),
-                           key=lambda item: item[1], reverse=True)
+        self.refresh_backup_list()
         checksum = self.backup_mgr.calc_checksum(GRUB_DEFAULT_PATH)
         if not self.backups:
             self.backup_mgr.create_backup('orig')
@@ -292,18 +299,32 @@ class GrubPal:
                     self.backup_mgr.create_backup(answer)
                     break
 
+    def really_wanna(self, act):
+        """ TBD """
+        answer = self.win.answer(esc_abort=True, seed='y',
+            prompt=f"Enter 'yes' to {act}")
+        if answer is None:
+            return False
+        answer = answer.strip().lower()
+        return answer.startswith('y')
+
     def update_grub(self):
         """ TBD """
+        if not self.really_wanna('commit changes and update GRUB'):
+            return
+
         contents =  "#--# NOTE: this file was built with 'grub-pal'\n"
         contents += "#--#     - We suggest updating the following params with 'grub-pal'\n"
         contents += "#--#       although not required'\n"
         for name, value in self.param_values.items():
             contents += f'{name}={value}\n'
         contents += "#--# NOTE: following are params NOT handled by 'grub-pal'\n"
-        contents += "#--#     - update these manually.\n\n"
+        contents += "#--#     - update these manually.\n"
         contents += ''.join(self.parsed.other_lines)
         
         self.win.stop_curses()
+        print("\033[2J\033[H") # 'clear'
+        print('\n\n===== Left grub-pal to update GRUB ====> ')
         # print('Check for correctness...')
         # print('-'*60)
         # print(contents)
@@ -356,7 +377,9 @@ class GrubPal:
                     else:
                         break
 
-                name, _, enums, checks = self._get_enums_checks()
+                name, _, enums, checks = '', None, [], []
+                if self.mode == 'usual' and not spins.help_mode:
+                    name, _, enums, checks = self._get_enums_checks()
                 if spins.cycle:
                     spins.cycle = False
                     if self.mode == 'usual' and enums:
@@ -394,7 +417,14 @@ class GrubPal:
 
                 if spins.delete:
                     spins.delete = False
-                    # TODO
+                    if self.mode == 'restore':
+                        idx = self.win.pick_pos
+                        if 0 <= idx < len(self.ordered_backup_pairs):
+                            doomed = self.ordered_backup_pairs[idx][1]
+                            if self.really_wanna(f'remove {doomed.name!r}'):
+                                os.unlink(doomed)
+                                self.refresh_backup_list()
+
 
 
             win.clear()
@@ -411,8 +441,6 @@ def main():
     """ TBD """
     rerun_module_as_root('grub_pal.main')
     pal = GrubPal()
-    print(f'{len(pal.params)=}')
-    print(f'{type(pal.params['GRUB_TIMEOUT'])=}')
     time.sleep(0.5)
     pal.main_loop()
 

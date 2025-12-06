@@ -73,27 +73,27 @@ Timeout & Menu:
 
 Kernel Arguments:
   GRUB_CMDLINE_LINUX:
+    section: Kernel Arguments
     default: '""'
     enums: {}
-    guidance: "Arguments passed to the Linux kernel ONLY on normal boot (not recovery).
+    guidance: "Kernel arguments for ALL normal/recovery boots.
       \n: Typical uses: video options, disabling specific drivers, or custom parameters.
-      \n: Values here are combined with GRUB_CMDLINE_LINUX_DEFAULT."
-    checks: []
+      \n: Separate multiple options with a space."
+    checks:
+      regex: ^"\.*"$
     specials: []
 
   GRUB_CMDLINE_LINUX_DEFAULT:
-    section: Kernel Arguments
     default: '"quiet splash"'
     enums:
-      "quiet splash": Default Ubuntu/Debian setting (hides boot messages).
-      "": Show all boot messages (no options).
-      "text": Force text mode display.
-      "nomodeset": Disable kernel mode setting (useful for graphics troubleshooting).
-    guidance: "Arguments passed to the Linux kernel for all boot entries (normal and recovery).
-      \n: Used for system-wide options.
-      \n: Separate multiple options with a space.
-      \n: Values here are combined with GRUB_CMDLINE_LINUX."
+      "quiet splash": Default Ubuntu/Debian setting (hides boot messages)
+      "text": Force text mode display early in boot process
+      "": Verbose boot
+    guidance: "Kernel arguments ONLY only for normal boots (not recovery).
+      \n: Values here are combined with GRUB_CMDLINE_LINUX. Common settings:
+      \n%ENUMS%"
     checks: []
+      regex: ^"\.*"$
     specials: []
 
   GRUB_DISABLE_LINUX_UUID:
