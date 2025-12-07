@@ -76,6 +76,57 @@ from .GrubCfgParser import get_top_level_grub_entries
 from .BackupMgr import BackupMgr, GRUB_DEFAULT_PATH
 from .GrubWriter import GrubWriter
 
+HOME_ST, REVIEW_ST, RESTORE_ST, HELP_ST = 0, 1, 2, 3  # screen numbers
+SCREENS = ('HOME', 'REVIEW', 'RESTORE', 'HELP') # screen names
+
+class ScreenStack:
+    """ TBD """
+    def __init__(self, win: ConsoleWindow , spins_obj: object, screens: tuple):
+        self.win = win
+        self.obj = spins_obj
+        self.screens = screens
+        self.stack = []
+        self.curr = None
+        self.push(HOME_ST)
+
+    def push(self, screen):
+        """TBD"""
+        if self.curr:
+            self.curr.pick_pos = self.win.pick_pos
+            self.curr.scroll_pos = self.win.scroll_pos
+            self.stack.append(self.curr)
+        self.curr = SimpleNamespace(num=screen,
+                  name=self.screens[screen], pick_pos=-1, scroll_pos=-1)
+        self.win.pick_pos = self.win.scroll_pos = 0
+    
+    def pop(self):
+        """ TBD """
+        if self.stack:
+            self.curr = self.stack.pop()
+
+    def is_curr(self, screens):
+        """TBD"""
+        def test_one(screen):
+            if isinstance(screen, int):
+                return screen == self.curr.num
+            return str(screen) == self.curr.name
+        if isinstance(screens, (tuple, list)):
+            for screen in screens:
+                if test_one(screen):
+                    return True
+            return False
+        return test_one(screen=screens)
+
+    def act_in(self, action, screens= None):
+        """ TBD """
+        val =  getattr(self.obj, action)
+        setattr(self.obj, action, False)
+        return val and (screens is None or self.is_curr(screens))
+
+
+
+                
+
 class GrubPal:
     """ TBD """
     singleton = None
@@ -88,7 +139,6 @@ class GrubPal:
         self.sections = None
         self.param_dicts = None
         self.positions = None
-        self.mode = None
         self.prev_pos = None
         self.param_names = None
         self.param_values = None
@@ -100,13 +150,13 @@ class GrubPal:
         self.grub_writer = GrubWriter()
         self.backups = None
         self.ordered_backup_pairs = None
+        self.ss = None
         self._reinit()
         
     def _reinit(self):
         """ Call to initialize or re-initialize with new /etc/default/grub """
         self.param_dicts = {}
         self.positions = []
-        self.mode = 'usual'  # 'restore
         self.param_values, self.prev_values = {}, {}
         self.sections = CannedConfig().data
         for idx, (section, params) in enumerate(self.sections.items()):
@@ -140,14 +190,13 @@ class GrubPal:
             self.param_dicts['GRUB_DEFAULT']['enums'].update(self.menu_entries)
         except Exception:
             pass
-        self.mode = 'usual'  # 'restore
     
     def setup_win(self):
         """TBD """
         spinner = self.spinner = OptionSpinner()
         self.spins = self.spinner.default_obj
-        spinner.add_key('help_mode', '? - toggle help screen', vals=[False, True])
-        spinner.add_key('cycle', 'c - next value in cycle', category='action')
+        spinner.add_key('help_mode', '? - enter help screen', category='action')
+        spinner.add_key('cycle', 'c - cycle value to next ', category='action')
         spinner.add_key('edit', 'e - edit value', category='action')
         spinner.add_key('guide', 'g - guidance toggle', vals=[True, False])
         spinner.add_key('enter_restore', 'R - enter restore screen', category='action')
@@ -160,6 +209,7 @@ class GrubPal:
 
         self.win = ConsoleWindow(head_line=True, keys=spinner.keys, ctrl_c_terminates=False)
         self.win.opt_return_if_pos_change = True
+        self.ss = ScreenStack(self.win, self.spins, SCREENS)
         
     def _get_enums_checks(self):
         """ TBD"""
@@ -200,7 +250,7 @@ class GrubPal:
             header += ' [e]dit'
 
         guide = 'UIDE' if self.spins.guide else 'uide'
-        header += f' [g]{guide} [w]rite [R]estore ?:help [q]uit'
+        header += f' [g]{guide} [w]rite [R]estore ?:help ESC:back [q]uit'
         chg_cnt = len(self.get_diffs())
         if chg_cnt:
             header += f'   #chg={chg_cnt}'
@@ -215,7 +265,7 @@ class GrubPal:
         win, spins = self.win, self.spins # shorthand
         pos = win.pick_pos
 
-        if self.mode != 'usual' or spins.help_mode:
+        if not self.ss.is_curr(HOME_ST):
             return pos
 
         pos = max(min(len(self.positions)-1, pos), 1)
@@ -416,11 +466,11 @@ class GrubPal:
         win, spins = self.win, self.spins # shorthand
         
         while True:
-            if spins.help_mode:
+            if self.ss.is_curr(HELP_ST):
                 win.set_pick_mode(False)
                 self.spinner.show_help_nav_keys(win)
                 self.spinner.show_help_body(win)
-            elif self.mode == 'restore':
+            elif self.ss.is_curr(RESTORE_ST):
                 win.set_pick_mode(True)
                 self.add_restore_head()
                 self.add_restore_body()
@@ -436,58 +486,65 @@ class GrubPal:
                 self.spinner.do_key(key, win)
                 if spins.quit:
                     spins.quit = False
-                    if self.mode == 'restore':
-                        self.mode = 'usual'
+                    if self.ss.is_curr(RESTORE_ST):
+                        self.ss.pop()
                     else:
                         break
 
                 name, _, enums, checks = '', None, [], []
-                if self.mode == 'usual' and not spins.help_mode:
+                if self.ss.is_curr(HOME_ST):
                     name, _, enums, checks = self._get_enums_checks()
-                if spins.cycle:
-                    spins.cycle = False
-                    if self.mode == 'usual' and enums:
+                # if spins.cycle:
+                    # spins.cycle = False
+                if self.ss.act_in('escape'):
+                    if self.ss.stack:
+                        self.ss.pop()
+
+                if spins.help_mode:
+                    spins.help_mode = True
+                if self.ss.act_in('help_mode', (HOME_ST, REVIEW_ST, RESTORE_ST)):
+                    self.ss.push(HELP_ST)
+
+                if self.ss.act_in('cycle', HOME_ST):
+                    if enums:
                         value = self.param_values[name]
                         choices = list(enums.keys())
                         idx = choices.index(value) if value in choices else -1
+                        if idx == -1:
+                            idx = choices.index(str(value)) if str(value) in choices else -1
                         value = choices[(idx+1) % len(choices)] # choose next
                         self.param_values[name] = value
-                if spins.edit:
-                    spins.edit = False
-                    if self.mode == 'usual' and checks:
+
+                if self.ss.act_in('edit', HOME_ST):
+                    if checks:
                         self.edit_param(win, name, checks)
                         
-                if spins.write:
-                    spins.write = False
-                    if self.mode == 'usual':
-                        self.update_grub()
+                if self.ss.act_in('write', HOME_ST):
+                    self.update_grub()
 
-                if spins.enter_restore:
-                    spins.enter_restore = False
-                    if self.mode != 'restore':
-                        self.mode = 'restore'
-                        self.do_start_up_backup()
+                if self.ss.act_in('enter_restore', HOME_ST):
+                    self.ss.push(RESTORE_ST)
+                    self.do_start_up_backup()
 
                 if spins.restore:
-                    spins.restore = False
-                    if self.mode == 'restore':
-                        idx = self.win.pick_pos
-                        if 0 <= idx < len(self.ordered_backup_pairs):
-                            key = self.ordered_backup_pairs[idx][0]
-                            self.backup_mgr.restore_backup(self.backups[key])
-                            self.mode = 'usual'
-                            self._reinit()
-                            self.do_start_up_backup()
+                    spins.restore = True
+                if self.ss.act_in('restore', RESTORE_ST):
+                    idx = self.win.pick_pos
+                    if 0 <= idx < len(self.ordered_backup_pairs):
+                        key = self.ordered_backup_pairs[idx][0]
+                        self.backup_mgr.restore_backup(self.backups[key])
+                        self.ss.pop()
+                        assert self.ss.is_curr(HOME_ST)
+                        self._reinit()
+                        self.do_start_up_backup()
 
-                if spins.delete:
-                    spins.delete = False
-                    if self.mode == 'restore':
-                        idx = self.win.pick_pos
-                        if 0 <= idx < len(self.ordered_backup_pairs):
-                            doomed = self.ordered_backup_pairs[idx][1]
-                            if self.really_wanna(f'remove {doomed.name!r}'):
-                                os.unlink(doomed)
-                                self.refresh_backup_list()
+                if self.ss.act_in('delete', RESTORE_ST):
+                    idx = self.win.pick_pos
+                    if 0 <= idx < len(self.ordered_backup_pairs):
+                        doomed = self.ordered_backup_pairs[idx][1]
+                        if self.really_wanna(f'remove {doomed.name!r}'):
+                            os.unlink(doomed)
+                            self.refresh_backup_list()
 
 
 
