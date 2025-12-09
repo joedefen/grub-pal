@@ -220,61 +220,27 @@ Recommendation: Assign a stable, unique ID to each distinct warning check in you
 Python
 
 ##### Use a composite key for suppression: PARAMETER_NAME + SEVERITY_LEVEL
-WARNING_ID = f'{p2}.{stars[4]}' # e.g., 'GRUB_SAVEDDEFAULT.****'
+WARNING_ID = f'{p2}.{stars[4]}' # e.g., 'GRUB_SAVEDEFAULT.****'
 
-This prevents a user from hiding all warnings for GRUB_SAVEDDEFAULT just because they suppressed one minor one.
+This prevents a user from hiding all warnings for GRUB_SAVEDEFAULT just because they suppressed one minor one.
 
 This feature will make your app much more professional and adaptable to various user needs.
 
 ---------------------
-##Big Picture Analysis
-* Guidance: Clear but could be better
-  * Weaknesses:
-    *Doesn't warn about risky combinations (e.g., TIMEOUT=0 + STYLE=hidden)
-    * Missing "this will require sudo" indicators
-    * Checks: Reasonable but incomplete
-  * Good:
-    * Regex patterns mostly solid
-    * Min/max where needed
-    * Path validation for files
-* Issues:
-  * Case sensitivity - .png vs .PNG, theme.txt vs Theme.txt
-  * No max bounds - Could set TIMEOUT to 999999
-  * GRUB_DEFAULT - Regex ^[^\s].*$ accepts garbage like @#$%
-* Missing (from WizValidator):
-  * TIMEOUT=0 + STYLE=hidden check
-  * TIMEOUT>0 + STYLE≠menu check
-  * quiet/splash in wrong CMDLINE
-  * SAVEDEFAULT=true + DEFAULT=numeric
-  * ENABLE_CRYPTODISK without LUKS
-  * OS_PROBER mismatches
-* **Recommendations**
-Critical:
-  * Add GRUB_DISABLE_RECOVERY to yaml
-  * Uncomment GRUB_DISTRIBUTOR (or remove from validator)
-  * Fix regex case sensitivity on file paths
-  * Add max value constraints (TIMEOUT < 300, etc.)
-  * Tighten GRUB_DEFAULT regex (allow only: digits, "saved", or quoted strings)
-  * Validate boolean params are actually true/false strings
-  * Add warnings to guidance for risky settings 9. Consider GRUB_DISABLE_SUBMENU, GRUB_GFXPAYLOAD_LINUX Nice-to-have:
-  * Glossary links for technical terms
-  * Indicate which params need root/reboot to test
-  * Group params by risk level in UI
   
   ----
   ----
   ## UNCOVERED PARAMS
-* Niche/Server (5-7):
+* Niche/Server:
   * GRUB_SERIAL_COMMAND - Serial console config
   * GRUB_INIT_TUNE - Beep speaker on boot
   * GRUB_BADRAM - Memory hole workarounds
   * GRUB_PRELOAD_MODULES - Manual module loading
   * GRUB_TERMINAL_OUTPUT - Output device (vs INPUT)
   * GRUB_VIDEO_BACKEND - Force vbe/efi_gop/etc
-* Deprecated (2):
-  * GRUB_HIDDEN_TIMEOUT_QUIET
-  * GRUB_RECORDFAIL (Ubuntu-only, auto-managed)
-* Rare edge cases (3):
+* Rare edge cases:
   * GRUB_DISABLE_LINUX_PARTUUID
   * GRUB_CMDLINE_LINUX_RECOVERY - Override recovery args
-  * GRUB_DISABLE_LINUX_UUID (you commented out)
+* Deprecated:
+  * GRUB_HIDDEN_TIMEOUT_QUIET
+  * GRUB_RECORDFAIL (Ubuntu-only, auto-managed)

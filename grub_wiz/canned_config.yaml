@@ -1,4 +1,4 @@
-Timeout & Menu:
+Boot Timeout:
   GRUB_TIMEOUT:
     default: 5
     enums:
@@ -13,6 +13,7 @@ Timeout & Menu:
     checks:
       regex: ^-?\d+$
       min: -1
+      max: 300
 
   GRUB_TIMEOUT_STYLE:
     default: menu
@@ -23,18 +24,6 @@ Timeout & Menu:
     guidance: "What to show during TIMEOUT period. Choices:
       \n%ENUMS%"
     checks: []
-
-  GRUB_DEFAULT:
-    default: 0
-    enums:
-      0: Boot first menu entry (usually the latest OS).
-      saved: Boot previously booted OS (ensure SAVEDDEFAULT is true)
-    guidance: "Sets the default menu entry to boot. Can be:
-      \n: An index number (starting from 0).
-      \n: A full menu entry title (case-sensitive).
-      \n%ENUMS%"
-    checks:
-      regex: ^\d+$|^saved$|^".*"$|^'.*'$ # number, 'saved', or quoted menu title
 
   GRUB_HIDDEN_TIMEOUT:
     default: ''
@@ -50,16 +39,6 @@ Timeout & Menu:
       regex: ^\d+$|^$
       min: 0
 
-  GRUB_SAVEDEFAULT:
-    default: 'false'
-    enums:
-      'false': Do not automatically save the last booted entry.
-      'true': Save the last booted entry as the new default.
-    guidance: "Automatically saves the last selected menu entry as the new default.
-      \n: Required when GRUB_DEFAULT='saved'.
-      \n%ENUMS%"
-    checks: []
-
   GRUB_RECORDFAIL_TIMEOUT:
     default: 30
     enums:
@@ -72,6 +51,40 @@ Timeout & Menu:
     checks:
       regex: ^\d+$
       min: 0
+
+Menu Entries:
+  GRUB_DEFAULT:
+    default: 0
+    enums:
+      0: Boot first menu entry (usually the latest OS).
+      saved: Boot previously booted OS (ensure SAVEDEFAULT is true)
+    guidance: "Sets the default menu entry to boot. Can be:
+      \n: An index number (starting from 0).
+      \n: A full menu entry title (case-sensitive).
+      \n%ENUMS%"
+    checks:
+      regex: ^\d+$|^saved$|^".*"$|^'.*'$
+
+  GRUB_SAVEDEFAULT:
+    default: 'false'
+    enums:
+      'false': Do not automatically save the last booted entry.
+      'true': Save the last booted entry as the new default.
+    guidance: "Automatically saves the last selected menu entry as the new default.
+      \n: Required when GRUB_DEFAULT='saved'.
+      \n%ENUMS%"
+    checks: []
+
+  GRUB_DISABLE_OS_PROBER:
+    default: 'false'
+    enums:
+      'false': Search for and automatically add other operating systems to the menu.
+      'true': Do not search for other operating systems.
+    guidance: "Setting to 'true' prevents GRUB from automatically scanning other partitions
+      for installed operating systems (like Windows, other Linux distros)
+      and adding them to the boot menu.
+      \n%ENUMS%"
+    checks: []
 
   GRUB_DISABLE_RECOVERY:
     default: 'false'
@@ -113,28 +126,16 @@ Kernel Arguments:
     checks:
       regex: ^".*"$
 
-# GRUB_DISABLE_LINUX_UUID:
-#   default: 'false'
-#   enums:
-#     'false': Use UUIDs (Recommended - less prone to breaking when disks are moved).
-#     'true': Use device names (e.g., /dev/sda1) instead of UUIDs.
-#   guidance: "Setting to 'true' stops GRUB from using the unique disk UUID
-#     (Universal Unique Identifier) for the root filesystem.
-#     \n%ENUMS%"
-#   checks: []
+Visual Appearance:
+  GRUB_DISTRIBUTOR:
+    default: $(lsb_release -i -s)
+    enums: {}
+    guidance: "Sets the visible name of the operating system in the boot menu.
+      \n: By default, it uses the Linux Standard Base (LSB) name (e.g., 'Ubuntu').
+      \n: Set to a custom string to change the display name."
+    checks:
+      regex: ^(".*"|'.*')$
 
-  GRUB_DISABLE_OS_PROBER:
-    default: 'false'
-    enums:
-      'false': Search for and automatically add other operating systems to the menu.
-      'true': Do not search for other operating systems.
-    guidance: "Setting to 'true' prevents GRUB from automatically scanning other partitions
-      for installed operating systems (like Windows, other Linux distros)
-      and adding them to the boot menu.
-      \n%ENUMS%"
-    checks: []
-
-Appearance:
   GRUB_BACKGROUND:
     default: ''
     enums: {}
@@ -143,15 +144,15 @@ Appearance:
       \n: Recommended size is screen resolution.
       \n: Leave blank for no background image."
     checks:
-      regex: ^/.*(\.png|\.jpg|\.jpeg)$|^$ # Must be a file path ending in an image extension, or empty
+      regex_i: ^/.*(\.png|\.jpg|\.jpeg)$|^$ # Case-insensitive: accepts .png/.PNG etc
 
-  GRUB_DISTRIBUTOR:
-    default: $(lsb_release -i -s)
+  GRUB_THEME:
+    default: ''
     enums: {}
-    guidance: "Sets the visible name of the operating system in the boot menu.
-      \n: By default, it uses the Linux Standard Base (LSB) name (e.g., 'Ubuntu').
-      \n: Set to a custom string to change the display name."
-#   checks: []
+    guidance: "Path to the theme.txt file for a custom GRUB theme.
+      \n: This overrides the background image setting (GRUB_BACKGROUND)."
+    checks:
+      regex_i: ^/.*theme\.txt$|^$ # Case-insensitive: accepts theme.txt/Theme.txt etc
 
   GRUB_GFXMODE:
     default: 640x480
@@ -165,15 +166,7 @@ Appearance:
       \n: Separate multiple desired resolutions with commas (e.g., 1024x768,auto).
       \n%ENUMS%"
     checks:
-      regex: ^(auto|\d+x\d+)(,\s*(auto|\d+x\d+))*$
-
-  GRUB_THEME:
-    default: ''
-    enums: {}
-    guidance: "Path to the theme.txt file for a custom GRUB theme.
-      \n: This overrides the background image setting (GRUB_BACKGROUND)."
-    checks:
-      regex: ^/.*theme\.txt$|^$ # Must be a file path ending in theme.txt, or empty
+      regex: ^(auto|keep|\d+x\d+)(,\s*(auto|keep|\d+x\d+))*$
 
   GRUB_GFXPAYLOAD_LINUX:
     default: ''
@@ -206,4 +199,15 @@ Security & Advanced:
       serial: Use a serial port for input.
     guidance: "Defines the input device for the GRUB command line and menu.
       \nMost desktop users should use 'console'."
+    checks: []
+
+
+  GRUB_DISABLE_LINUX_UUID:
+    default: 'false'
+    enums:
+      'false': Use UUIDs (Recommended - not prone breaks when disks moved)
+      'true': Use device names (e.g., /dev/sda1) instead of UUIDs
+    guidance: "Setting to 'true' stops GRUB from using the unique disk UUID
+      (Universal Unique Identifier) for the root filesystem.
+      \n%ENUMS%"
     checks: []

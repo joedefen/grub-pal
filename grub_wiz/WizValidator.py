@@ -148,12 +148,12 @@ class WizValidator:
                 key: param
                 value: list of (severity, message)
         """
-
         def unquote(value):
-            if value.startswith("'"):
-                return value[1:].rstrip("'")
-            if value.startswith('"'):
-                return value[1:].rstrip('"')
+            if isinstance(value, str):
+                if value.startswith("'"):
+                    return value[1:].rstrip("'")
+                if value.startswith('"'):
+                    return value[1:].rstrip('"')
             return value
         def quotes(param): # all forms of simple value in grub config
             return (param, f'"{param}"', f"'{param}'")
@@ -161,7 +161,7 @@ class WizValidator:
             return param[5:]
         def hey(param, severity, message):
             nonlocal warns, stars
-            if not warns[param]:
+            if param not in warns:
                 warns[param] = []
             warns[param].append((stars[severity], message))
 
@@ -169,8 +169,8 @@ class WizValidator:
         warns = {}
         layout = self.probe_disk_layout()
 
-        # if _DEFAULT is saved, then _SAVEDDEFAULT must be true
-        p1, p2 = 'GRUB_DEFAULT', 'GRUB_SAVEDDEFAULT'
+        # if _DEFAULT is saved, then _SAVEDEFAULT must be true
+        p1, p2 = 'GRUB_DEFAULT', 'GRUB_SAVEDEFAULT'
         if vals[p1] in quotes('saved'):
             if vals[p2] not in quotes('true'):
                 hey(p2, 4, f'must be "true" since {sh(p1)} is "saved"')
@@ -238,10 +238,15 @@ class WizValidator:
         if layout.is_lvm_active and 'rd.lvm.vg=' not in vals[p2]:
             hey(p2, 3, 'no "rd.lvm.vg=" but LVM seems active')
 
+        # --- Best Practice Check 3: ENABLE_CRYPTODISK without LUKS ---
+        p1 = 'GRUB_ENABLE_CRYPTODISK'
+        if vals.get(p1) in quotes('true') and not layout.is_luks_active:
+            hey(p1, 1, 'enabled but no LUKS encryption detected')
+
         # --- Advanced Check 1: SAVEDEFAULT=true but DEFAULT is numeric ---
         # The GRUB documentation discourages this because a numeric default can change
         # if the menu entries are reordered.
-        p1, p2 = 'GRUB_SAVEDDEFAULT', 'GRUB_DEFAULT'
+        p1, p2 = 'GRUB_SAVEDEFAULT', 'GRUB_DEFAULT'
         if vals[p1] in quotes('true'):
             default_value = vals.get(p2, '0') # Default to '0' if missing
             # A simple check for numeric (excluding "saved", "menuentry title", etc.)
@@ -264,9 +269,11 @@ class WizValidator:
 
         # --- Common Mistake Check 2: GRUB_BACKGROUND path doesn't exist ---
         for p1 in ['GRUB_BACKGROUND', 'GRUB_THEME']:
-            exists, _ =  self.get_full_path_and_check_existence(vals[p1])
-            if not exists:
-                hey(p1, 2, 'path does not seem to exist')
+            val = vals.get(p1, '')
+            if val:  # Only check if not empty
+                exists, _ =  self.get_full_path_and_check_existence(val)
+                if not exists:
+                    hey(p1, 2, 'path does not seem to exist')
 
 
         # --- Common Mistake Check 4: GFXMODE set but not a known safe value ---
@@ -278,7 +285,7 @@ class WizValidator:
             '800x600',
             '1024x768',
             'auto',
-            'keep' # 'keep' means keep the resolution set by the BIOS/firmware
+            'keep'  # 'keep' means keep the resolution set by the BIOS/firmware
         }
 
         value = vals.get(p1)
@@ -296,8 +303,12 @@ class WizValidator:
 
         # --- Common Mistake Check 5: Missing GRUB_DISTRIBUTOR ---
         p1 = 'GRUB_DISTRIBUTOR'
-        if not vals[p1]:
-            # If the value is completely missing or empty
+        val = vals.get(p1, '')
+        # Allow shell commands like $(lsb_release...) or `command`
+        if val and not val.startswith('$(') and not val.startswith('`'):
+            if not val.strip():
+                hey(p1, 2, 'should be distro name (it is missing/empty)')
+        elif not val:
             hey(p1, 2, 'should be distro name (it is missing/empty)')
 
 
@@ -330,24 +341,47 @@ class WizValidator:
 
         return warns
 
-    @staticmethod
-    def demo(defaults, param_dict):
+    def demo(self, param_defaults):
         """ TBD """
         def dump(title):
             nonlocal warnings
-            print(f'\n{title})')
-            for param, pairs in warnings.items():
-                for pair in pairs:
-                    print(f'{param:>20} {pair[0]:>4} {pair[1]}')
+            print(f'\n{title}')
+            if not warnings:
+                print('  (no warnings)')
+            else:
+                for param, pairs in warnings.items():
+                    for pair in pairs:
+                        print(f'{param:>30} {pair[0]:>4} {pair[1]}')
 
-        validator = WizValidator(param_dict)
+        changes = [
+            ('DEFAULT=saved without SAVEDEFAULT=true',
+             {'GRUB_DEFAULT': 'saved', 'GRUB_SAVEDEFAULT': 'false'}),
 
-        vals = deepcopy(defaults)
-        # change vals
-        warnings = validator.make_warns(vals)
-        dump('demo1')
+            ('TIMEOUT=0 with TIMEOUT_STYLE=hidden',
+             {'GRUB_TIMEOUT': '0', 'GRUB_TIMEOUT_STYLE': 'hidden'}),
 
-        vals = deepcopy(defaults)
-        # change vals
-        warnings = validator.make_warns(vals)
-        dump('demo2')
+            ('SAVEDEFAULT=true with numeric DEFAULT',
+             {'GRUB_SAVEDEFAULT': 'true', 'GRUB_DEFAULT': '2'}),
+
+            ('quiet/splash in CMDLINE_LINUX (recovery)',
+             {'GRUB_CMDLINE_LINUX': '"quiet splash"'}),
+
+            ('Invalid boolean value',
+             {'GRUB_SAVEDEFAULT': 'maybe'}),
+
+            ('TIMEOUT=5 with TIMEOUT_STYLE=countdown',
+             {'GRUB_TIMEOUT': '5', 'GRUB_TIMEOUT_STYLE': 'countdown'}),
+
+            ('Nonexistent background path',
+             {'GRUB_BACKGROUND': '/nonexistent/image.png'}),
+
+            ('Clean config - no issues',
+             {}),
+        ]
+
+        for title, overrides in changes:
+            vals = deepcopy(param_defaults)
+            for param, val in overrides.items():
+                vals[param] = val
+            warnings = self.make_warns(vals)
+            dump(title)

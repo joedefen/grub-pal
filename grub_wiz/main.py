@@ -70,6 +70,7 @@ import traceback
 import re
 import subprocess
 import json
+from argparse import ArgumentParser
 from types import SimpleNamespace
 from typing import Tuple #, Optional
 from .ConsoleWindowCopy import OptionSpinner, ConsoleWindow
@@ -78,6 +79,7 @@ from .GrubParser import GrubParser
 from .GrubCfgParser import get_top_level_grub_entries
 from .BackupMgr import BackupMgr, GRUB_DEFAULT_PATH
 from .GrubWriter import GrubWriter
+from .WizValidator import WizValidator
 
 HOME_ST, REVIEW_ST, RESTORE_ST, HELP_ST = 0, 1, 2, 3  # screen numbers
 SCREENS = ('HOME', 'REVIEW', 'RESTORE', 'HELP') # screen names
@@ -137,7 +139,7 @@ class GrubWiz:
         self.spinner = None
         self.spins = None
         self.sections = None
-        self.param_dicts = None
+        self.param_cfg = None
         self.positions = None
         self.prev_pos = None
         self.param_names = None
@@ -149,6 +151,7 @@ class GrubWiz:
         self.menu_entries = None
         self.backup_mgr = BackupMgr()
         self.grub_writer = GrubWriter()
+        self.wiz_validator = None
         self.backups = None
         self.ordered_backup_pairs = None
         self.ss = None
@@ -157,7 +160,7 @@ class GrubWiz:
         
     def _reinit(self):
         """ Call to initialize or re-initialize with new /etc/default/grub """
-        self.param_dicts = {}
+        self.param_cfg = {}
         self.positions = []
         self.param_values, self.prev_values = {}, {}
         self.param_defaults = {}
@@ -169,12 +172,14 @@ class GrubWiz:
             self.positions.append( SimpleNamespace(
                 param_name=None, section_name=section))
             for param_name, payload in params.items():
-                self.param_dicts[param_name] = payload
+                self.param_cfg[param_name] = payload
                 self.positions.append(SimpleNamespace(
                     param_name=param_name, section_name=None))
                 self.param_defaults[param_name
-                            ] = self.param_dicts[param_name]['default']
-        self.param_names = list(self.param_dicts.keys())
+                            ] = self.param_cfg[param_name]['default']
+        self.param_names = list(self.param_cfg.keys())
+        if self.wiz_validator is None:
+            self.wiz_validator = WizValidator(self.param_cfg)
 
         self.parsed = GrubParser(params=self.param_names)
         self.parsed.get_etc_default_grub()
@@ -185,14 +190,14 @@ class GrubWiz:
             name_wid = max(name_wid, len(param_name))
             value = self.parsed.vals.get(param_name, None)
             if value is None:
-                value = self.param_dicts[param_name]['default']
+                value = self.param_cfg[param_name]['default']
             self.param_values[param_name] = value
         self.param_name_wid = name_wid - len('GRUB_')
         self.prev_values.update(self.param_values)
 
         self.menu_entries = get_top_level_grub_entries()
         try:
-            self.param_dicts['GRUB_DEFAULT']['enums'].update(self.menu_entries)
+            self.param_cfg['GRUB_DEFAULT']['enums'].update(self.menu_entries)
         except Exception:
             pass
     
@@ -221,7 +226,7 @@ class GrubWiz:
         enums, checks = None, None
         pos = self.adjust_picked_pos()
         param_name = self.positions[pos].param_name
-        params = self.param_dicts[param_name]
+        params = self.param_cfg[param_name]
         enums = params.get('enums', None)
         checks = params.get('checks', None)
         return param_name, params, enums, checks
@@ -369,14 +374,32 @@ class GrubWiz:
                 continue
 
             param_name = ns.param_name
+            cfg = self.param_cfg[param_name]
+            enums = cfg.get('enums', [])
+            checks = cfg.get('checks', [])
             value = self.param_values[param_name]
             dots = '.' * (self.param_name_wid-len(param_name[5:])+3)
             param_line = f'  {param_name[5:]} {dots}  {value}'
             if not self.spins.guide or pos != picked:
                 win.add_body(param_line)
+                if pos != picked:
+                    continue
+                more = ''
+                if enums:
+                    more += '   CYCLE:' # going to add enums
+                    for choice in enums.keys():
+                        if str(value) == str(choice):
+                            more += ' ><'
+                        elif len(str(choice)) > 0:
+                            more += f' {choice}'
+                        else:
+                            more += " ''"
+                if checks and enums:
+                    more += ' or EDIT'
+                win.add_body(more, resume=True)
                 continue
             emits.append(param_line)
-            text = self.param_dicts[param_name]['guidance']
+            text = self.param_cfg[param_name]['guidance']
             lines = text.split('\n')
             lead = '    '
             wid = win.cols - len(lead)
@@ -384,9 +407,8 @@ class GrubWiz:
                 wrapped = ''
                 if line.strip() == '%ENUMS%':
                     wrapped += ': Cycle values with [c]:\n'
-                    payload = self.param_dicts[param_name]
-                    for enum, descr in payload['enums'].items():
-                        star = '* ' if str(enum) == str(value) else '- '
+                    for enum, descr in cfg['enums'].items():
+                        star = ' [*] ' if str(enum) == str(value) else ' [ ] '
                         line = f' {star}{enum}: {descr}\n'
                         wrapped += textwrap.fill(line, width=wid, subsequent_indent=' '*5)
                         wrapped += '\n'
@@ -414,9 +436,10 @@ class GrubWiz:
         valid = False
         hint, pure_regex = '', ''
         for key, check in checks.items():
-            if key == 'regex':
+            if key in ('regex', 'regex_i'):
                 pure_regex = check.encode().decode('unicode_escape')
-                hint += f'  pat={pure_regex}'
+                case = '_i' if key == 'regex_i' else ''
+                hint += f'  pat{case}={pure_regex}'
             else:
                 hint += f'  {key}={check}'
         hint = hint[2:]
@@ -428,9 +451,11 @@ class GrubWiz:
                 return
             valid = True # until proven otherwise
             for key, check in checks.items():
-                if key == 'regex':
-                    if not re.match(check, str(value)):
-                        valid, hint = False, f'must match: {pure_regex}'
+                if key in ('regex', 'regex_i'):
+                    flags = re.IGNORECASE if key == 'regex_i' else 0
+                    if not re.match(check, str(value), flags=flags):
+                        suffix = ' (ign case)' if key == 'regex_i' else ''
+                        valid, hint = False, f'must match{suffix}: {pure_regex}'
                         break
                 elif key in ['min', 'max']:
                     ival = value
@@ -525,6 +550,30 @@ class GrubWiz:
         self._reinit()
         self.do_start_up_backup()
 
+    def find_in(self, value, enums=None, cfg=None):
+        """ Find the value in the list of choices using only
+        string comparisons (because representation uncertain)
+
+        Returns ns (.idx, .next_idx, .next_value)
+        """
+        choices = None
+        if cfg:
+            enums = cfg.get(enums, [])
+        if enums:
+            choices = list(enums.keys())
+        assert choices
+
+        idx = -1 # default to before first
+        for ii, choice in enumerate(choices):
+            if str(value) == str(choice):
+                idx = ii
+                break
+        next_idx = (idx+1) % len(choices)
+        next_value = choices[next_idx] # choose next
+        return SimpleNamespace(idx=idx, choices=choices,
+                       next_idx=next_idx, next_value=next_value)
+
+
     def main_loop(self):
         """ TBD """
         assert self.parsed.get_etc_default_grub()
@@ -584,12 +633,8 @@ class GrubWiz:
                 if self.ss.act_in('cycle', HOME_ST):
                     if enums:
                         value = self.param_values[name]
-                        choices = list(enums.keys())
-                        idx = choices.index(value) if value in choices else -1
-                        if idx == -1:
-                            idx = choices.index(str(value)) if str(value) in choices else -1
-                        value = choices[(idx+1) % len(choices)] # choose next
-                        self.param_values[name] = value
+                        found = self.find_in(value, enums)
+                        self.param_values[name] = found.next_value
 
                 if self.ss.act_in('edit', HOME_ST):
                     if checks:
@@ -640,9 +685,20 @@ def rerun_module_as_root(module_name):
 def main():
     """ TBD """
     rerun_module_as_root('grub_wiz.main')
-    pal = GrubWiz()
+    parser = ArgumentParser(description='grub-wiz: your grub-update guide')
+    parser.add_argument('--validator-demo', action='store_true',
+                        help='for test only: run validator demo')
+    opts = parser.parse_args()
+
+    wiz = GrubWiz()
+    if opts.validator_demo:
+        wiz.wiz_validator.demo(wiz.param_defaults)
+        sys.exit(0)
+
+
+
     time.sleep(0.5)
-    pal.main_loop()
+    wiz.main_loop()
 
 if __name__ == '__main__':
     try:
