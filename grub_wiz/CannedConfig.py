@@ -7,8 +7,6 @@
   enums: # list of values for 'type: cycle' or 'type: special_list'
     - value: meaning
   regex: {regex} # Optional, for 'type: input' validation
-  specials: # Optional, for 'type: special_list' population
-    - {special_key} # e.g., "get-res-list", "get-disk-uuid"
   brief: {text} # < 60 char description
   full: {text} # < 400 char detailed explanation
 """

@@ -89,7 +89,24 @@ Backup and restore features:
 
 ## Appendix
 
-#### Checks
+#### Checks General
+Boot Prevention (Critical: ****):
+*   DEFAULT/SAVEDEFAULT: Ensures saving the default works correctly.
+*   TIMEOUT/STYLE Conflict: Prevents the menu from becoming completely inaccessible.
+*   HIDDEN_TIMEOUT: Prevents an unrecoverable "hidden" menu when a timeout isn't set.
+
+Usability & Debugging (High: *** / **):
+*   quiet/splash in _LINUX: Helps preserve debugging output for recovery mode.
+*   OS Prober Conflict: Alerts dual-boot users why their secondary OS might be missing.
+*   Quoting: Catches common syntax errors that can break the command line.
+*   File Paths: Prevents failed background/theme loading.
+
+Best Practice (Low: *):
+*   GFXMODE: Gently nudges users toward known safe video modes.
+
+#### Checks Specific [TODO: remove]
+
+    DEFAULT/SAVEDEFAULT numeric: Flags fragile configuration pairings.
 * Critical (prevent boot issues):
   * saved → must have GRUB_SAVEDEFAULT=true
   * hidden → should have GRUB_HIDDEN_TIMEOUT set
@@ -158,3 +175,106 @@ Parameter	Purpose & When to Use It	Example Use Case
 The authoritative source for all kernel command-line parameters is the official Linux kernel documentation. Since parameters can change between major kernel versions, this is always the best place to check for advanced or very specific options:
 
 Official Linux Kernel Documentation (Current): Search for the `kernel-parameters.rst` document in the official kernel git repository. A common link to this documentation is the `kernel-command-line(7)` manual page, which is linked to the online documentation.
+
+
+#### HIDE FEATURE
+👍 Gains of the Hide/Suppress Feature
+
+This feature addresses the core tension between offering comprehensive configuration and avoiding user annoyance.
+1. Improved User Experience & Focus
+
+    Suppression of "Noise": Users who are confident in their configuration (like your preference for empty CMDLINE variables) can permanently hide low-severity warnings or warnings they deem incorrect. This prevents alert fatigue.
+
+    Reduced Clutter: You can default uncommon or advanced parameters to hidden, significantly cleaning up the interface for 90% of users while keeping the full power accessible via the [S]how toggle. This helps with the perceived "simplicity" of your app.
+
+2. Flexibility for Development
+
+    Issuing "Opinionated" Warnings: You gain the freedom to include "mostly right" or best-practice warnings (like the low-star GRUB_GFXMODE suggestion) without fear of irritating advanced users. They can simply hide it.
+
+    Wider Scope: You can easily add more obscure or distribution-specific parameters, knowing they won't clutter the default view.
+
+💻 Implementation Details and Persistence
+
+The key to making this work is robust state persistence using the .ini file.
+1. Data Structure for Persistence
+
+Your .ini file (e.g., .grub-wiz-config.ini) would need a dedicated section to store the hidden state for both parameters and warnings.
+Element	Key in .ini	Value in .ini	Example
+Parameters	HiddenParams	Comma-separated list of parameter names.	GRUB_HIDDEN_TIMEOUT,GRUB_ENABLE_CRYPTODISK
+Warnings	SuppressedWarnings	Comma-separated list of warning IDs/Keys.	GRUB_TIMEOUT_STYLE.critical,GRUB_DEFAULT.low
+2. State Management
+
+You would need a central Controller or StateManager class that manages the following actions:
+
+    Load: On startup, read the .ini file and populate internal sets (self.hidden_params, self.suppressed_warnings).
+
+    Save: Write the current sets back to the .ini file whenever a user toggles visibility.
+
+    Toggle: The [h]ide action adds the item to the appropriate set and triggers the save. The [S]how action clears both sets, effectively revealing everything.
+
+3. Warning Identification
+
+For warnings, simply using the parameter name as the key (GRUB_TIMEOUT) is insufficient, as one parameter might generate multiple warnings of different severities (e.g., GRUB_DEFAULT causes a **** error and a * error).
+
+Recommendation: Assign a stable, unique ID to each distinct warning check in your make_warns method, or use a composite key:
+Python
+
+##### Use a composite key for suppression: PARAMETER_NAME + SEVERITY_LEVEL
+WARNING_ID = f'{p2}.{stars[4]}' # e.g., 'GRUB_SAVEDDEFAULT.****'
+
+This prevents a user from hiding all warnings for GRUB_SAVEDDEFAULT just because they suppressed one minor one.
+
+This feature will make your app much more professional and adaptable to various user needs.
+
+---------------------
+##Big Picture Analysis
+* Guidance: Clear but could be better
+  * Weaknesses:
+    *Doesn't warn about risky combinations (e.g., TIMEOUT=0 + STYLE=hidden)
+    * Missing "this will require sudo" indicators
+    * Checks: Reasonable but incomplete
+  * Good:
+    * Regex patterns mostly solid
+    * Min/max where needed
+    * Path validation for files
+* Issues:
+  * Case sensitivity - .png vs .PNG, theme.txt vs Theme.txt
+  * No max bounds - Could set TIMEOUT to 999999
+  * GRUB_DEFAULT - Regex ^[^\s].*$ accepts garbage like @#$%
+* Missing (from WizValidator):
+  * TIMEOUT=0 + STYLE=hidden check
+  * TIMEOUT>0 + STYLE≠menu check
+  * quiet/splash in wrong CMDLINE
+  * SAVEDEFAULT=true + DEFAULT=numeric
+  * ENABLE_CRYPTODISK without LUKS
+  * OS_PROBER mismatches
+* **Recommendations**
+Critical:
+  * Add GRUB_DISABLE_RECOVERY to yaml
+  * Uncomment GRUB_DISTRIBUTOR (or remove from validator)
+  * Fix regex case sensitivity on file paths
+  * Add max value constraints (TIMEOUT < 300, etc.)
+  * Tighten GRUB_DEFAULT regex (allow only: digits, "saved", or quoted strings)
+  * Validate boolean params are actually true/false strings
+  * Add warnings to guidance for risky settings 9. Consider GRUB_DISABLE_SUBMENU, GRUB_GFXPAYLOAD_LINUX Nice-to-have:
+  * Glossary links for technical terms
+  * Indicate which params need root/reboot to test
+  * Group params by risk level in UI
+  
+  ----
+  ----
+  ## UNCOVERED PARAMS
+* Niche/Server (5-7):
+  * GRUB_SERIAL_COMMAND - Serial console config
+  * GRUB_INIT_TUNE - Beep speaker on boot
+  * GRUB_BADRAM - Memory hole workarounds
+  * GRUB_PRELOAD_MODULES - Manual module loading
+  * GRUB_TERMINAL_OUTPUT - Output device (vs INPUT)
+  * GRUB_VIDEO_BACKEND - Force vbe/efi_gop/etc
+* Deprecated (2):
+  * GRUB_HIDDEN_TIMEOUT_QUIET
+  * GRUB_RECORDFAIL (Ubuntu-only, auto-managed)
+* Rare edge cases (3):
+  * GRUB_DISABLE_LINUX_PARTUUID
+  * GRUB_CMDLINE_LINUX_RECOVERY - Override recovery args
+  * GRUB_DISABLE_LINUX_UUID (you commented out)

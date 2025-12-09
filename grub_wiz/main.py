@@ -68,7 +68,10 @@ import time
 import textwrap
 import traceback
 import re
+import subprocess
+import json
 from types import SimpleNamespace
+from typing import Tuple #, Optional
 from .ConsoleWindowCopy import OptionSpinner, ConsoleWindow
 from .CannedConfig import CannedConfig
 from .GrubParser import GrubParser
@@ -124,9 +127,6 @@ class ScreenStack:
         return val and (screens is None or self.is_curr(screens))
 
 
-
-                
-
 class GrubWiz:
     """ TBD """
     singleton = None
@@ -142,6 +142,7 @@ class GrubWiz:
         self.prev_pos = None
         self.param_names = None
         self.param_values = None
+        self.param_defaults = None
         self.prev_values = None
         self.parsed = None
         self.param_name_wid = 0
@@ -151,6 +152,7 @@ class GrubWiz:
         self.backups = None
         self.ordered_backup_pairs = None
         self.ss = None
+        self.is_other_os = None # don't know yet
         self._reinit()
         
     def _reinit(self):
@@ -158,6 +160,7 @@ class GrubWiz:
         self.param_dicts = {}
         self.positions = []
         self.param_values, self.prev_values = {}, {}
+        self.param_defaults = {}
         self.sections = CannedConfig().data
         for idx, (section, params) in enumerate(self.sections.items()):
             if idx > 0: # blank line before sections except 1st
@@ -169,6 +172,8 @@ class GrubWiz:
                 self.param_dicts[param_name] = payload
                 self.positions.append(SimpleNamespace(
                     param_name=param_name, section_name=None))
+                self.param_defaults[param_name
+                            ] = self.param_dicts[param_name]['default']
         self.param_names = list(self.param_dicts.keys())
 
         self.parsed = GrubParser(params=self.param_names)
@@ -230,6 +235,70 @@ class GrubWiz:
         """ TBD """
         for pair in self.ordered_backup_pairs:
             self.win.add_body(pair[1].name)
+
+    def add_review_head(self):
+        """ TBD """
+        header = '[d]elete [r]estore ?:help [q]uit'
+        self.win.add_header(header)
+
+    def add_review_body(self):
+        """ TBD """
+        diffs = self.get_diffs()
+        for param_name, (old_value, new_value) in diffs.items():
+            dots = '.' * (self.param_name_wid-len(param_name[5:])+3)
+            self.win.add_body(f'  {param_name[5:]} {dots}  {new_value}')
+            self.win.add_body(f'  {'was':>{self.param_name_wid+4}}  {old_value}')
+
+
+
+    def is_other_os_heuristic(self) -> bool:
+        """
+        Performs a quick heuristic check for common non-Linux partition types.
+        Targets NTFS, VFAT, and specific Windows GUIDs.
+        """
+        if self.is_other_os is not None:
+            return self.is_other_os
+        
+        self.is_other_os = False # presume false until decided otherwise
+        
+        cmd = ['lsblk', '-o', 'FSTYPE,PARTTYPE', '-J'] 
+
+        try:
+            result = subprocess.run(
+                cmd, 
+                capture_output=True, 
+                text=True, 
+                check=False # Don't raise error on non-zero exit code
+            )
+            
+            if result.returncode != 0:
+                # If lsblk fails (e.g., permissions), we can't check
+                return self.is_other_os 
+
+            data = json.loads(result.stdout)
+            
+            for device in data.get('blockdevices', []):
+                if 'children' in device:
+                    for partition in device['children']:
+                        # Check for common Windows filesystem types
+                        fstype = partition.get('FSTYPE', '').lower()
+                        if fstype in ('ntfs', 'vfat', 'fat32', 'exfat'):
+                            self.is_other_os = True
+                            return self.is_other_os
+                            
+                        # Check for specific Windows partition GUIDs (PARTTYPE)
+                        # Example: Windows Recovery Partition GUID
+                        parttype = partition.get('PARTTYPE', '').lower()
+                        if 'de94bba4-06d9-4d40-a16a-bfd50179d6ac' in parttype:
+                            self.is_other_os = True
+                            return self.is_other_os
+                                
+        except (FileNotFoundError, json.JSONDecodeError):
+            # Timeout occurred, lsblk not found, or bad JSON output
+            pass
+            
+        return self.is_other_os
+
         
     def get_diffs(self):
         """ get the key/value pairs with differences"""
@@ -301,7 +370,7 @@ class GrubWiz:
 
             param_name = ns.param_name
             value = self.param_values[param_name]
-            dots = '.' * (self.param_name_wid-len(param_name)+8)
+            dots = '.' * (self.param_name_wid-len(param_name[5:])+3)
             param_line = f'  {param_name[5:]} {dots}  {value}'
             if not self.spins.guide or pos != picked:
                 win.add_body(param_line)
@@ -470,15 +539,22 @@ class GrubWiz:
                 win.set_pick_mode(False)
                 self.spinner.show_help_nav_keys(win)
                 self.spinner.show_help_body(win)
+
             elif self.ss.is_curr(RESTORE_ST):
                 win.set_pick_mode(True)
                 self.add_restore_head()
                 self.add_restore_body()
 
-            else: # usual mode
+            elif self.ss.is_curr(REVIEW_ST):
+                win.set_pick_mode(True)
+                self.add_review_head()
+                self.add_review_body()
+
+            else: # HOME_ST screen
                 win.set_pick_mode(True)
                 self.add_guided_head()
                 self.add_guided_body()
+
             win.render()
             key = win.prompt(seconds=seconds)
             seconds = 3.0
@@ -519,8 +595,11 @@ class GrubWiz:
                     if checks:
                         self.edit_param(win, name, checks)
                         
-                if self.ss.act_in('write', HOME_ST):
-                    self.update_grub()
+                if self.ss.act_in('write', (HOME_ST, REVIEW_ST)):
+                    if self.ss.is_curr(HOME_ST):
+                        self.ss.push(REVIEW_ST)
+                    else: # REVIEW_ST
+                        self.update_grub()
 
                 if self.ss.act_in('enter_restore', HOME_ST):
                     self.ss.push(RESTORE_ST)
