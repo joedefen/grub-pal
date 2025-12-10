@@ -13,6 +13,7 @@ import time
 import textwrap
 import traceback
 import re
+import curses as cs
 from argparse import ArgumentParser
 from types import SimpleNamespace
 from typing import Any #, Tuple #, Opt
@@ -193,8 +194,13 @@ class GrubWiz:
         spinner = self.spinner = OptionSpinner()
         self.spins = self.spinner.default_obj
         spinner.add_key('help_mode', '? - enter help screen', category='action')
-        spinner.add_key('cycle', 'c - cycle value to next ', category='action')
-        spinner.add_key('edit', 'e - edit value', category='action')
+        spinner.add_key('undo', 'u - revert to old value', category='action')
+        spinner.add_key('cycle_next', 'c,=> - cycle value to next ',
+                        category='action', keys=[ord('c'), cs.KEY_RIGHT])
+        spinner.add_key('cycle_prev', '<= - cycle value to prev ',
+                        category='action', keys=[ord('C'), cs.KEY_LEFT])
+        spinner.add_key('edit', 'e,ENTER - edit value', category='action',
+                            keys=[ord('e'), 10, 13])
         spinner.add_key('guide', 'g - guidance toggle', vals=[False, True])
         spinner.add_key('enter_restore', 'R - enter restore screen', category='action')
         spinner.add_key('restore', 'r - restore selected backup [in restore screen]', category='action')
@@ -434,6 +440,7 @@ class GrubWiz:
         picked = win.pick_pos
         emits = []
         view_size = win.scroll_view_size
+        found_current = False
         for pos, ns in enumerate(self.positions):
             if ns.section_name == ' ':
                 win.add_body(f'{ns.section_name}')
@@ -445,6 +452,8 @@ class GrubWiz:
             param_name = ns.param_name
             param_line, _ = self.body_param_line(
                             param_name, pos, picked, self.spins.guide)
+            if pos == picked:
+                found_current = True
             if not self.spins.guide or pos != picked:
                 win.add_body(param_line)
                 continue
@@ -481,6 +490,7 @@ class GrubWiz:
         over = picked - win.scroll_pos + len(emits) - view_size
         if over > 0:
             win.scroll_pos += over # scroll back by number of out-of-view lines
+        return found_current
 
     def edit_param(self, win, name, regex):
         """ Prompt user for answer until gets it right"""
@@ -569,11 +579,11 @@ class GrubWiz:
             ok = False
         else:
             install_rv = self.grub_writer.run_grub_update()
-            if install_rv[0]:
+            if not install_rv[0]:
                 print(install_rv[1])
                 ok = False
         if ok:
-            os.system('clear; "echo OK ... newly installed:";  cat /etc/default/grub')
+            os.system('clear ; echo "OK ... newly installed" ;  cat /etc/default/grub')
         input('\n\n===== Press ENTER to return to grub-wiz ====> ')
 
         self.win.start_curses()
@@ -586,7 +596,7 @@ class GrubWiz:
         """ Find the value in the list of choices using only
         string comparisons (because representation uncertain)
 
-        Returns ns (.idx, .next_idx, .next_value)
+        Returns ns (.idx, .next_idx, .next_value, .prev_idx, .prev_value)
         """
         choices = None
         if cfg:
@@ -602,8 +612,11 @@ class GrubWiz:
                 break
         next_idx = (idx+1) % len(choices)
         next_value = choices[next_idx] # choose next
+        prev_idx = (idx+len(choices)-1) % len(choices)
+        prev_value = choices[prev_idx] # choose next
         return SimpleNamespace(idx=idx, choices=choices,
-                       next_idx=next_idx, next_value=next_value)
+                       next_idx=next_idx, next_value=next_value,
+                       prev_idx=prev_idx, prev_value=prev_value)
 
 
     def main_loop(self):
@@ -634,7 +647,8 @@ class GrubWiz:
             else: # HOME_ST screen
                 win.set_pick_mode(True)
                 self.add_home_head()
-                self.add_home_body()
+                if not self.add_home_body():
+                    seconds = 0.1 # not on current (so adjust quickly)
 
             win.render()
             key = win.prompt(seconds=seconds)
@@ -666,11 +680,22 @@ class GrubWiz:
                 if self.ss.act_in('help_mode', (HOME_ST, REVIEW_ST, RESTORE_ST)):
                     self.prev_pos = self.ss.push(HELP_ST, self.prev_pos)
 
-                if self.ss.act_in('cycle', (HOME_ST, REVIEW_ST)):
+                if self.ss.act_in('cycle_next', (HOME_ST, REVIEW_ST)):
                     if enums:
                         value = self.param_values[name]
                         found = self.find_in(value, enums)
                         self.param_values[name] = found.next_value
+
+                if self.ss.act_in('cycle_prev', (HOME_ST, REVIEW_ST)):
+                    if enums:
+                        value = self.param_values[name]
+                        found = self.find_in(value, enums)
+                        self.param_values[name] = found.prev_value
+
+                if self.ss.act_in('undo', REVIEW_ST):
+                    if name:
+                        prev_value = self.prev_values[name]
+                        self.param_values[name] = prev_value
 
                 if self.ss.act_in('edit', (HOME_ST, REVIEW_ST)):
                     if regex:
