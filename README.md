@@ -89,47 +89,6 @@ Backup and restore features:
 
 ## Appendix
 
-#### Checks General
-Boot Prevention (Critical: ****):
-*   DEFAULT/SAVEDEFAULT: Ensures saving the default works correctly.
-*   TIMEOUT/STYLE Conflict: Prevents the menu from becoming completely inaccessible.
-*   HIDDEN_TIMEOUT: Prevents an unrecoverable "hidden" menu when a timeout isn't set.
-
-Usability & Debugging (High: *** / **):
-*   quiet/splash in _LINUX: Helps preserve debugging output for recovery mode.
-*   OS Prober Conflict: Alerts dual-boot users why their secondary OS might be missing.
-*   Quoting: Catches common syntax errors that can break the command line.
-*   File Paths: Prevents failed background/theme loading.
-
-Best Practice (Low: *):
-*   GFXMODE: Gently nudges users toward known safe video modes.
-
-#### Checks Specific [TODO: remove]
-
-    DEFAULT/SAVEDEFAULT numeric: Flags fragile configuration pairings.
-* Critical (prevent boot issues):
-  * saved → must have GRUB_SAVEDEFAULT=true
-  * hidden → should have GRUB_HIDDEN_TIMEOUT set
-* Best practices:
-  * splash only in _DEFAULT, not in _LINUX (recovery mode shows text)
-  * quiet only in _DEFAULT, not in _LINUX
-  * GRUB_TIMEOUT=0 with GRUB_TIMEOUT_STYLE=hidden → unrecoverable if default fails
-  * GRUB_DISABLE_OS_PROBER=true when dual-boot detected (check for Windows/other partitions)
-* Common mistakes:
-  * Unquoted values in GRUB_CMDLINE_* (should have quotes)
-  * GRUB_BACKGROUND path doesn't exist
-  * GRUB_THEME path doesn't exist
-  * GRUB_GFXMODE set but no valid modes (warn if not using auto)
-* Advanced:
-  * GRUB_ENABLE_CRYPTODISK=true but no LUKS detected
-  * GRUB_SAVEDEFAULT=true but GRUB_DEFAULT is numeric (contradictory)
-
-* Implementation:
-  * Warnings (yellow) vs Errors (red)
-  * Allow override/proceed anyway
-  * Group by severity
-  * Top priority: first 2 critical checks.
-
 #### Running grub-wiz at recovery time
 
 To leverage user-installed, `grub-wiz` even in minimal recovery environment of grub recovery mode:

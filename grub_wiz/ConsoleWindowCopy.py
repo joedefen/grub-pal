@@ -401,6 +401,13 @@ class ConsoleWindow:
     @staticmethod
     def _start_curses():
         """
+        For compatibility only. Used to be private, but that was annoying.
+        """
+        return ConsoleWindow.start_curses()
+
+    @staticmethod
+    def start_curses():
+        """
         Performs the Curses initial setup: initscr, noecho, cbreak, curs_set(0),
         keypad(1), and sets up the timeout.
 

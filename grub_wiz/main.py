@@ -2,63 +2,8 @@
 """
 TODO:
  - handle wrapping values that are long
- - screen concept; (new func)  if self.act_on('variable', screens)
- - (ok) track changes to parameters (old and new values)
-   - don't write immediately, but go to review screen
-   - allow undoing changes
-   - go back to main screen ESC (make ESC "go back")
-   - commit from this screen
-        Main Screen
-          ↓ [w]rite
-        Issues Screen (if issues exist)
-          - List warnings/errors
-          - Offer auto-fix for some
-          ↓ [w]rite or ESC→back
-        Review Screen
-          - Show old→new for all changes
-          - Allow undo per-param
-          ↓ [w]rite or ESC→back
-        Commit
-          - Write /etc/default/grub
-          - Run grub-update
-          ↓
-        Back to Main
-        Notes:
-            Skip issues screen if clean
-            Skip review if no changes
-            Each screen has clear "what will happen next" indicator
-            ESC always = back/cancel safely
-        Clean, intuitive, hard to accidentally break system.
- - ALTERNATIVE:
-    - Managed Section,"Only show parameters that have changed.
-      This keeps the screen clean. If a parameter's value is the same as
-      the original file's value, it disappears from this review."
-    - New Value Line,GRUB_TIMEOUT: 5 (The currently staged value).
-       This line is the focus point for navigation and editing.
-    - Old Value Line,was: 10 (Aligned below the new value).
-      This provides the essential context for the change.
-    - Issues Line,*** Issue: Value must be > 0 (The *** severity
-      indicator works well in a TUI). This line only appears if validation fails.
-    - [u] Undo Action,"If the cursor is on the GRUB_TIMEOUT line, pressing
-      [u]undo immediately resets the new value back to the old value
-      (10 in the example). If successful, the parameter disappears from the review screen."
-    - Navigation Back,[b]ack to editor (Allows the user to return to the main
-      configuration screen if they need to change something else).
-    - Commit Action,[w]rite changes (The final commit action).
-      This should trigger the warning screen if issues still exist.
+ - when starting the home screen, it takes 3 seconds to jump to valid line
  - writing YAML into .config directory and read it first (allow user extension)
- 
- Backburner:
-- Recovery mechanism - Consider documenting how users can restore from backup
-  if something goes wrong (especially from a rescue environment).
-- Distribution compatibility - Different distros use update-grub vs grub-mkconfig.
-  Worth mentioning your compatibility scope.
-- The "Boot Entry Management" TODO - This is actually quite complex since it
-  involves parsing grub.cfg rather than just modifying /etc/default/grub.
-  Consider whether this fits the "simple and safe" philosophy.
-- Implement any of these:
-    - get_menu_entries requires parsing /boot/grub/grub.cfg which can be tricky
-    - get-res-list would need to query display capabilities (maybe via hwinfo, xrandr, or reading VESA modes)
 """
 # pylint: disable=invalid_name,broad-exception-caught
 
@@ -68,11 +13,9 @@ import time
 import textwrap
 import traceback
 import re
-import subprocess
-import json
 from argparse import ArgumentParser
 from types import SimpleNamespace
-from typing import Any, Tuple #, Opt
+from typing import Any #, Tuple #, Opt
 from .ConsoleWindowCopy import OptionSpinner, ConsoleWindow
 from .CannedConfig import CannedConfig
 from .GrubParser import GrubParser
@@ -377,7 +320,7 @@ class GrubWiz:
                 diffs[key] = (value, new_value)
         return diffs
 
-    def add_guided_head(self):
+    def add_home_head(self):
         """ TBD"""
         header = ''
         _, _, enums, regex = self._get_enums_regex()
@@ -399,7 +342,7 @@ class GrubWiz:
           - the 1st entry is a section name
           - the last entry is NOT a section name
         """
-        win, spins = self.win, self.spins # shorthand
+        win = self.win
         pos = win.pick_pos
 
         if not self.ss.is_curr(HOME_ST):
@@ -427,7 +370,9 @@ class GrubWiz:
         win = self.win # shorthand
         pos = win.pick_pos
 
-        if not self.ss.is_curr(REVIEW_ST):
+        if not self.ss.is_curr((HOME_ST, REVIEW_ST)):
+            return pos
+        if not self.clues:
             return pos
 
         pos = max(min(len(self.clues)-1, pos), 0)
@@ -483,8 +428,7 @@ class GrubWiz:
             param_line += more
         return param_line, keys
 
-
-    def add_guided_body(self):
+    def add_home_body(self):
         """ TBD """
         win = self.win # short hand
         picked = win.pick_pos
@@ -628,9 +572,11 @@ class GrubWiz:
             if install_rv[0]:
                 print(install_rv[1])
                 ok = False
+        if ok:
+            os.system('clear; "echo OK ... newly installed:";  cat /etc/default/grub')
         input('\n\n===== Press ENTER to return to grub-wiz ====> ')
 
-        self.win._start_curses()
+        self.win.start_curses()
         if ok:
             self._reinit()
             self.ss = ScreenStack(self.win, self.spins, SCREENS)
@@ -687,8 +633,8 @@ class GrubWiz:
 
             else: # HOME_ST screen
                 win.set_pick_mode(True)
-                self.add_guided_head()
-                self.add_guided_body()
+                self.add_home_head()
+                self.add_home_body()
 
             win.render()
             key = win.prompt(seconds=seconds)
@@ -734,6 +680,7 @@ class GrubWiz:
                     if self.ss.is_curr(HOME_ST):
                         self.prev_pos = self.ss.push(REVIEW_ST, self.prev_pos)
                         self.must_reviews = None # reset
+                        self.clues = []
                     else: # REVIEW_ST
                         self.update_grub()
 

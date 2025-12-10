@@ -47,6 +47,7 @@ class GrubParser:
         #       #GRUB_{SOMETHING}={VALUE}
         # - anything not like that is discarded
         # - if the parameter is in params, then save the value
+        self.other_lines = []
         block_lines = []
         param_line_re = r'^\s*(#)?\s*(GRUB\_[A-Z_]+)=(.+?)\s*(?:#.*)?$'
         for line in lines:
