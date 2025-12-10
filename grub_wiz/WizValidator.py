@@ -340,14 +340,14 @@ class WizValidator:
                     hey(param_name, 3, 'value not in list of allowed values')
 
         timeout_limits = {
-            'GRUB_TIMEOUT': (60, 'over 60s seems ill advised'),
-            'GRUB_RECORDFAIL_TIMEOUT': (120, 'over 120s seems ill advised'),
-            'GRUB_HIDDEN_TIMEOUT': (10, 'over 10s seems ill advised'),
+            'GRUB_TIMEOUT': 60,
+            'GRUB_RECORDFAIL_TIMEOUT': 120,
+            'GRUB_HIDDEN_TIMEOUT': 10,
         }
-        for param, (limit, msg) in timeout_limits.items():
-            val = str(unquote(vals.get(param)))
+        for param_name, limit in timeout_limits.items():
+            val = str(unquote(vals.get(param_name)))
             if val and val.isdigit() and int(val) > limit:
-                hey(param, 1, msg)  # Low severity - just a suggestion
+                hey(param_name, 1, f'over {limit}s seems ill advised')  # Low severity - just a suggestion
 
         return warns
 
