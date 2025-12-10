@@ -72,7 +72,7 @@ import subprocess
 import json
 from argparse import ArgumentParser
 from types import SimpleNamespace
-from typing import Tuple #, Optional
+from typing import Any, Tuple #, Opt
 from .ConsoleWindowCopy import OptionSpinner, ConsoleWindow
 from .CannedConfig import CannedConfig
 from .GrubParser import GrubParser
@@ -92,22 +92,28 @@ class ScreenStack:
         self.screens = screens
         self.stack = []
         self.curr = None
-        self.push(HOME_ST)
+        self.push(HOME_ST, 0)
 
-    def push(self, screen):
+    def push(self, screen, prev_pos):
         """TBD"""
         if self.curr:
             self.curr.pick_pos = self.win.pick_pos
             self.curr.scroll_pos = self.win.scroll_pos
+            self.curr.prev_pos = prev_pos
             self.stack.append(self.curr)
         self.curr = SimpleNamespace(num=screen,
-                  name=self.screens[screen], pick_pos=-1, scroll_pos=-1)
+                  name=self.screens[screen], pick_pos=-1,
+                                scroll_pos=-1, prev_pos=-1)
         self.win.pick_pos = self.win.scroll_pos = 0
+        return 0
     
     def pop(self):
         """ TBD """
         if self.stack:
             self.curr = self.stack.pop()
+            self.win.pick_pos = self.curr.pick_pos
+            self.win.scroll_pos = self.curr.scroll_pos
+            return self.curr.prev_pos
 
     def is_curr(self, screens):
         """TBD"""
@@ -128,6 +134,40 @@ class ScreenStack:
         setattr(self.obj, action, False)
         return val and (screens is None or self.is_curr(screens))
 
+
+class Clue:
+    """
+    A semi-formal object that enforces fixed required fields (cat, ident) 
+    and accepts arbitrary keyword arguments.
+    """
+    def __init__(self, cat: str, ident: str='', **kwargs: Any):
+        """
+        Initializes the Clue object.
+
+        :param cat: The required fixed cat (e.g., 'param', 'warn').
+        # :param context: A required fixed field providing context.
+        :param kwargs: Arbitrary optional fields (e.g., var1='foo', var2='bar').
+        """
+        # 1. Rigorous Fixed Field Assignment (Validation)
+        # Ensure the fixed fields are not empty/invalid if needed
+        if not cat:
+             raise ValueError("The 'cat' field is required and cannot be empty.")
+        # if not ident:
+             # raise ValueError("The 'ident' field is required and cannot be empty.")
+             
+        self.cat = cat
+        self.ident = ident
+
+        # 2. Forgiving Variable Field Assignment
+        # Iterate over the arbitrary keyword arguments (kwargs)
+        # and assign them directly as attributes to the instance.
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+            
+    def __repr__(self):
+        # A helpful representation similar to SimpleNamespace
+        attrs = [f"{k}={v!r}" for k, v in self.__dict__.items()]
+        return f"Clue({', '.join(attrs)})"
 
 class GrubWiz:
     """ TBD """
@@ -154,6 +194,8 @@ class GrubWiz:
         self.wiz_validator = None
         self.backups = None
         self.ordered_backup_pairs = None
+        self.must_reviews = None
+        self.clues = None
         self.ss = None
         self.is_other_os = None # don't know yet
         self._reinit()
@@ -164,6 +206,7 @@ class GrubWiz:
         self.positions = []
         self.param_values, self.prev_values = {}, {}
         self.param_defaults = {}
+        self.must_reviews = None
         self.sections = CannedConfig().data
         for idx, (section, params) in enumerate(self.sections.items()):
             if idx > 0: # blank line before sections except 1st
@@ -217,7 +260,8 @@ class GrubWiz:
                         category="action", keys=[27,])
         spinner.add_key('quit', 'q,ctl-c - quit the app', category='action', keys={0x3, ord('q')})
 
-        self.win = ConsoleWindow(head_line=True, keys=spinner.keys, ctrl_c_terminates=False)
+        self.win = ConsoleWindow(head_line=True,
+                                 keys=spinner.keys, ctrl_c_terminates=False)
         self.win.opt_return_if_pos_change = True
         self.ss = ScreenStack(self.win, self.spins, SCREENS)
         
@@ -242,17 +286,68 @@ class GrubWiz:
             self.win.add_body(pair[1].name)
 
     def add_review_head(self):
-        """ TBD """
+        """ Construct the review screen header
+            Presumes the body was created and self.clues[]
+            is populated.
+        """
         header = '[d]elete [r]estore ?:help [q]uit'
         self.win.add_header(header)
 
     def add_review_body(self):
         """ TBD """
+        def add_review_item(param_name, value, old_value=None, heys=None):
+            nonlocal reviews
+            if param_name not in reviews:
+                reviews[param_name] = SimpleNamespace(
+                    value=value,
+                    old_value=old_value,
+                    heys=[] if heys is None else heys
+                )
+            return reviews[param_name]
+
+        reviews = {}
         diffs = self.get_diffs()
-        for param_name, (old_value, new_value) in diffs.items():
+        warns = self.wiz_validator.make_warns(self.param_values)
+        if self.must_reviews is None:
+            self.must_reviews = list(diffs.keys())
+            self.clues = [] # info about the body rows
+            for param_name, heys in warns.items():
+                for hey in heys:
+                    words = re.findall(r'\b[_A-Z]+\b', hey[1])
+                    for word in words:
+                        other_name = word
+                        if f'GRUB_{word}'in self.param_values:
+                            other_name = f'GRUB_{word}'
+                        elif word not in self.param_values:
+                            continue
+                        if other_name not in self.must_reviews:
+                            self.must_reviews.append(other_name)
+                self.must_reviews.append(param_name)
+            
+        for param_name in self.must_reviews:
+            if param_name in diffs:
+                old_value, new_value = diffs[param_name]
+                item = add_review_item(param_name, new_value, old_value)
+            else:
+                value = self.param_values[param_name]
+                item = add_review_item(param_name, value)
+            heys = warns.get(param_name, None)
+            if heys:
+                item.heys += heys
+
+        self.clues = []
+
+        for param_name, ns in reviews.items():
             dots = '.' * (self.param_name_wid-len(param_name[5:])+3)
-            self.win.add_body(f'  {param_name[5:]} {dots}  {new_value}')
-            self.win.add_body(f'  {'was':>{self.param_name_wid+4}}  {old_value}')
+            self.win.add_body(f'  {param_name[5:]} {dots}  {ns.value}')
+            self.clues.append(Clue('param', param_name))
+
+            if ns.old_value is not None and str(ns.value) != str(ns.old_value):
+                self.win.add_body(f'  {'was':>{self.param_name_wid+4}}  {ns.old_value}')
+                self.clues.append(Clue('nop'))
+            for hey in ns.heys:
+                self.win.add_body(f'  {hey[0]:>{self.param_name_wid+4}}  {hey[1]}')
+                self.clues.append(Clue('issue', f'{param_name}.{len(hey[0])}'))
 
 
 
@@ -354,6 +449,37 @@ class GrubWiz:
                 pos -= 1
             ns = self.positions[pos]
         assert ns.param_name
+        win.pick_pos = pos
+        self.prev_pos = pos
+        return pos
+
+    def adjust_picked_pos_w_clues(self):
+        """ This assumes: the clues were created by the body.
+        """
+        win = self.win # shorthand
+        pos = win.pick_pos
+
+        if not self.ss.is_curr(REVIEW_ST):
+            return pos
+
+        pos = max(min(len(self.clues)-1, pos), 0)
+        if pos == win.pick_pos and pos == self.prev_pos:
+            return pos
+        up = bool(pos >= self.prev_pos)
+        for _ in range(2):
+            clue = self.clues[pos]
+            while clue.cat in ('nop', ):
+                if up:
+                    pos += 1
+                else:
+                    pos -= 1
+                if 0 <= pos < len(self.clues):
+                    clue = self.clues[pos]
+                else:
+                    pos = max(min(len(self.clues)-1, pos), 0)
+                    break
+            up = bool(not up)
+
         win.pick_pos = pos
         self.prev_pos = pos
         return pos
@@ -596,8 +722,8 @@ class GrubWiz:
 
             elif self.ss.is_curr(REVIEW_ST):
                 win.set_pick_mode(True)
-                self.add_review_head()
                 self.add_review_body()
+                self.add_review_head()
 
             else: # HOME_ST screen
                 win.set_pick_mode(True)
@@ -607,12 +733,16 @@ class GrubWiz:
             win.render()
             key = win.prompt(seconds=seconds)
             seconds = 3.0
+            if key is None:
+                if self.ss.is_curr(REVIEW_ST):
+                    self.adjust_picked_pos_w_clues()
+
             if key is not None:
                 self.spinner.do_key(key, win)
                 if spins.quit:
                     spins.quit = False
                     if self.ss.is_curr(RESTORE_ST):
-                        self.ss.pop()
+                        self.prev_pos = self.ss.pop()
                     else:
                         break
 
@@ -623,12 +753,12 @@ class GrubWiz:
                     # spins.cycle = False
                 if self.ss.act_in('escape'):
                     if self.ss.stack:
-                        self.ss.pop()
+                        self.prev_pos = self.ss.pop()
 
                 if spins.help_mode:
                     spins.help_mode = True
                 if self.ss.act_in('help_mode', (HOME_ST, REVIEW_ST, RESTORE_ST)):
-                    self.ss.push(HELP_ST)
+                    self.prev_pos = self.ss.push(HELP_ST, self.prev_pos)
 
                 if self.ss.act_in('cycle', HOME_ST):
                     if enums:
@@ -642,12 +772,13 @@ class GrubWiz:
                         
                 if self.ss.act_in('write', (HOME_ST, REVIEW_ST)):
                     if self.ss.is_curr(HOME_ST):
-                        self.ss.push(REVIEW_ST)
+                        self.prev_pos = self.ss.push(REVIEW_ST, self.prev_pos)
+                        self.must_reviews = None # reset
                     else: # REVIEW_ST
                         self.update_grub()
 
                 if self.ss.act_in('enter_restore', HOME_ST):
-                    self.ss.push(RESTORE_ST)
+                    self.prev_pos = self.ss.push(RESTORE_ST, self.prev_pos)
                     self.do_start_up_backup()
 
                 if spins.restore:
@@ -657,7 +788,7 @@ class GrubWiz:
                     if 0 <= idx < len(self.ordered_backup_pairs):
                         key = self.ordered_backup_pairs[idx][0]
                         self.backup_mgr.restore_backup(self.backups[key])
-                        self.ss.pop()
+                        self.prev_pos = self.ss.pop()
                         assert self.ss.is_curr(HOME_ST)
                         self._reinit()
                         self.do_start_up_backup()
