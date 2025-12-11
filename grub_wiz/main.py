@@ -22,6 +22,7 @@ from .CannedConfig import CannedConfig
 from .GrubParser import GrubParser
 from .GrubCfgParser import get_top_level_grub_entries
 from .BackupMgr import BackupMgr, GRUB_DEFAULT_PATH
+from .WizHider import WizHider
 from .GrubWriter import GrubWriter
 from .WizValidator import WizValidator
 
@@ -125,6 +126,7 @@ class GrubWiz:
         self.sections = None
         self.param_cfg = None
         self.positions = None
+        self.seen_positions = None
         self.prev_pos = None
         self.param_names = None
         self.param_values = None
@@ -134,6 +136,7 @@ class GrubWiz:
         self.param_name_wid = 0
         self.menu_entries = None
         self.backup_mgr = BackupMgr()
+        self.hider = WizHider(self.backup_mgr)
         self.grub_writer = GrubWriter()
         self.wiz_validator = None
         self.backups = None
@@ -194,14 +197,18 @@ class GrubWiz:
         spinner = self.spinner = OptionSpinner()
         self.spins = self.spinner.default_obj
         spinner.add_key('help_mode', '? - enter help screen', category='action')
-        spinner.add_key('undo', 'u - revert to old value', category='action')
-        spinner.add_key('cycle_next', 'c,=> - cycle value to next ',
-                        category='action', keys=[ord('c'), cs.KEY_RIGHT])
-        spinner.add_key('cycle_prev', '<= - cycle value to prev ',
-                        category='action', keys=[ord('C'), cs.KEY_LEFT])
+        spinner.add_key('undo', 'u - revert value', category='action')
+        spinner.add_key('cycle_next', 'c,=>,SP - next cycle value',
+                        category='action', keys=[ord('c'), cs.KEY_RIGHT, ord(' ')])
+        spinner.add_key('cycle_prev', '<=,BS - prev cycle value',
+                        category='action', keys=[ord('C'), cs.KEY_LEFT, cs.KEY_BACKSPACE])
         spinner.add_key('edit', 'e,ENTER - edit value', category='action',
                             keys=[ord('e'), 10, 13])
         spinner.add_key('guide', 'g - guidance toggle', vals=[False, True])
+        spinner.add_key('hide', 'h - hide param or issue', category='action')
+        spinner.add_key('hard_hide', 'H - hard-hide param', category='action')
+        spinner.add_key('unhide', '^ - un-hide param or issue', category='action')
+        spinner.add_key('show_hidden', 'S - show all hidden items')
         spinner.add_key('enter_restore', 'R - enter restore screen', category='action')
         spinner.add_key('restore', 'r - restore selected backup [in restore screen]', category='action')
         spinner.add_key('delete', 'd - delete selected backup [in restore screen]', category='action')
@@ -220,7 +227,8 @@ class GrubWiz:
         enums, regex, param_name = None, None, None
         pos = self.win.pick_pos
         if self.ss.is_curr(HOME_ST):
-            param_name = self.positions[pos].param_name
+            if self.seen_positions and 0 <= pos < len(self.seen_positions):
+                param_name = self.seen_positions[pos].param_name
         elif self.ss.is_curr(REVIEW_ST):
             clue = self.clues[pos]
             if clue.cat == 'param':
@@ -354,18 +362,28 @@ class GrubWiz:
         if not self.ss.is_curr(HOME_ST):
             return pos
 
-        pos = max(min(len(self.positions)-1, pos), 1)
+        pos = max(min(len(self.seen_positions)-1, pos), 1)
         if pos == win.pick_pos and pos == self.prev_pos:
             return pos
         up = bool(pos >= self.prev_pos)
-        ns = self.positions[pos]
-        while ns.section_name:
-            if up:
-                pos += 1
-            else:
-                pos -= 1
-            ns = self.positions[pos]
-        assert ns.param_name
+        ns = self.seen_positions[pos]
+        for _ in range(2):
+            keep_going = True
+            while ns.section_name and keep_going:
+                pos += 1 if up else -1
+                if 0 <= pos < len(self.seen_positions):
+                    ns = self.seen_positions[pos]
+                else:
+                    pos = min(max(0, pos), len(self.seen_positions)-1)
+                    while ns.section_name:
+                        pos += -1 if up else 1
+                        if 0 <= pos < len(self.seen_positions):
+                            ns = self.seen_positions[pos]
+                        else:
+                            pos = min(max(0, pos), len(self.seen_positions)-1)
+                            keep_going = False
+                            break 
+
         win.pick_pos = pos
         self.prev_pos = pos
         return pos
@@ -441,7 +459,11 @@ class GrubWiz:
         emits = []
         view_size = win.scroll_view_size
         found_current = False
-        for pos, ns in enumerate(self.positions):
+        self.seen_positions = []
+        for ns in self.positions:
+            if not ns.param_name or not self.hider.is_hidden_param(ns.param_name):
+                self.seen_positions.append(ns)
+        for pos, ns in enumerate(self.seen_positions):
             if ns.section_name == ' ':
                 win.add_body(f'{ns.section_name}')
                 continue
@@ -700,6 +722,11 @@ class GrubWiz:
                 if self.ss.act_in('edit', (HOME_ST, REVIEW_ST)):
                     if regex:
                         self.edit_param(win, name, regex)
+
+                if self.ss.act_in('hide', (HOME_ST, REVIEW_ST)):
+                    if self.ss.is_curr(HOME_ST) and name:
+                        self.hider.hide_soft_param(name)
+                        self.hider.write_if_dirty()
                         
                 if self.ss.act_in('write', (HOME_ST, REVIEW_ST)):
                     if self.ss.is_curr(HOME_ST):
