@@ -10,8 +10,13 @@ import re
 import subprocess
 import time
 from pathlib import Path
-from typing import Optional, Set, Tuple
+from typing import Optional, Set
 from ruamel.yaml import YAML
+
+try:
+    from .UserConfigDir import get_user_config_dir
+except:
+    from UserConfigDir import get_user_config_dir
 
 yaml = YAML()
 yaml.preserve_quotes = True
@@ -25,20 +30,49 @@ STATE_OK = "OK"                        # Successfully discovered parameters
 # Cache refresh interval (1 week in seconds)
 WEEK_IN_SECONDS = 7 * 24 * 60 * 60
 
+# Threshold for considering discovered params valid (80% coverage)
+ABSENT_THRESHOLD = 0.20
+
 
 class ParamDiscovery:
     """Discovers and caches system-supported GRUB parameters"""
 
-    def __init__(self, config_dir: Path = None):
+    def __init__(self, user_config=None):
         """
         Args:
-            config_dir: Directory for cached results. Defaults to ~/.config/grub-wiz/
+            user_config: UserConfigDir instance (uses singleton if not provided)
         """
-        if config_dir is None:
-            config_dir = Path.home() / '.config' / 'grub-wiz'
-
-        self.config_dir = Path(config_dir)
+        self.user_config = user_config if user_config else get_user_config_dir("grub-wiz")
+        self.config_dir = self.user_config.config_dir
         self.cache_file = self.config_dir / 'system-params.yaml'
+
+        # Load state from cache
+        cached_data = self.load_cached_data()
+        self._manual_disabled = cached_data['manual_disabled'] if cached_data else False
+
+    def manual_enable(self, state: Optional[bool] = None) -> bool:
+        """
+        Set or get the manual enable/disable state.
+
+        Args:
+            state: True to enable discovery, False to disable, None to query
+
+        Returns:
+            Current state (True=enabled, False=disabled)
+        """
+        if state is not None:
+            new_disabled = not state  # Convert enable to disabled flag
+            if new_disabled != self._manual_disabled:
+                self._manual_disabled = new_disabled
+                # Save updated state - preserve existing params and state
+                cached_data = self.load_cached_data()
+                if cached_data:
+                    self.save_params(cached_data['params'], cached_data['state'])
+                else:
+                    # No cache yet, create minimal entry
+                    self.save_params(set(), STATE_NO_INFO)
+
+        return not self._manual_disabled  # Return as "enabled" flag
 
     def discover_params(self) -> tuple[Set[str], str]:
         """
@@ -109,8 +143,6 @@ class ParamDiscovery:
             params: Set of parameter names
             state: Discovery state (STATE_NO_INFO, STATE_CANNOT_PARSE, or STATE_OK)
         """
-        self.config_dir.mkdir(parents=True, exist_ok=True)
-
         # Convert set to sorted list for readable YAML
         params_list = sorted(params)
         current_time = int(time.time())
@@ -122,18 +154,23 @@ class ParamDiscovery:
                 'unixtime': current_time
             },
             'source': 'info grub',
-            'note': 'Parameters not in this list will be hard-hidden by default'
+            'note': 'Parameters not in this list will be hard-hidden by default',
+            'manual_disabled': self._manual_disabled
         }
 
         with open(self.cache_file, 'w', encoding='utf-8') as f:
             yaml.dump(data, f)
 
+        # Set ownership to real user
+        self.user_config.give_to_user(self.cache_file, mode=0o644)
+
     def load_cached_data(self) -> Optional[dict]:
         """
-        Load cached discovery data including params and status.
+        Load cached discovery data including params, status, and manual_disabled flag.
 
         Returns:
-            Dictionary with 'params', 'state', and 'timestamp', or None if cache doesn't exist
+            Dictionary with 'params', 'state', 'timestamp', and 'manual_disabled',
+            or None if cache doesn't exist
         """
         if not self.cache_file.exists():
             return None
@@ -150,13 +187,15 @@ class ParamDiscovery:
             state = status.get('state', STATE_NO_INFO)
             timestamp = status.get('unixtime', 0)
 
-            # Extract params
+            # Extract params and manual_disabled flag
             params = set(data.get('discovered_params', []))
+            manual_disabled = data.get('manual_disabled', False)
 
             return {
                 'params': params,
                 'state': state,
-                'timestamp': timestamp
+                'timestamp': timestamp,
+                'manual_disabled': manual_disabled
             }
         except Exception as e:
             print(f"Warning: Failed to load cache file: {e}")
@@ -204,6 +243,10 @@ class ParamDiscovery:
         Returns:
             Set of parameter names supported on this system
         """
+        # If manually disabled, return empty set (behave as NO_INFO)
+        if self._manual_disabled:
+            return set()
+
         # Load cached data
         cached_data = self.load_cached_data()
 
@@ -237,6 +280,109 @@ class ParamDiscovery:
         self.save_params(params, new_state)
         return params
 
+    def dump(self, param_list: Optional[list] = None) -> None:
+        """
+        Display discovered parameters and optionally compare against a list.
+
+        Args:
+            param_list: Optional list of parameters to compare against.
+                       If provided, shows comparison (missing/extra/match).
+                       If None, shows simple dump of discovered params.
+        """
+        # Load cached data
+        cached_data = self.load_cached_data()
+        params = cached_data['params'] if cached_data else set()
+
+        if param_list is None:
+            # Simple dump
+            print(f"{'='*60}")
+            print(f"Discovered Parameters ({len(params)} total):")
+            print(f"{'='*60}")
+
+            if cached_data:
+                print(f"Status: {cached_data['state']}")
+                age_days = (int(time.time()) - cached_data['timestamp']) / (24 * 60 * 60)
+                print(f"Cache age: {age_days:.1f} days")
+                print(f"Manual: {'disabled' if self._manual_disabled else 'enabled'}")
+                print()
+
+            for param in sorted(params):
+                print(f"  {param}")
+
+            print(f"\nCache location: {self.cache_file}")
+        else:
+            def print_set(header, tag, items):
+                print(header + f': {len(items)}:')
+                for p in sorted(items):
+                    print(f"  {tag} {p}")
+                print()
+
+            # Comparison mode
+            expected = set(param_list)
+            missing = expected - params
+            extra = params - expected
+
+            print(f"{'='*60}")
+            print("Comparison Results:")
+            print(f"{'='*60}")
+
+            if cached_data:
+                print(f"Status: {cached_data['state']}")
+                age_days = (int(time.time()) - cached_data['timestamp']) / (24 * 60 * 60)
+                print(f"Cache age: {age_days:.1f} days")
+                print(f"Manual: {'disabled' if self._manual_disabled else 'enabled'}")
+                print()
+
+            if missing:
+                print_set(f"Missing (known but not found)", '-', missing)
+
+            if extra:
+                print_set(f'Extra (found but unknown)', '+', extra)
+
+            if expected:
+                print_set("✓ Perfect match", '=', expected)
+
+    def get_absent(self, param_list: list) -> Set[str]:
+        """
+        Get parameters from param_list that are not supported on this system.
+
+        Only returns results if:
+        - Discovery is manually enabled
+        - Discovery state is OK
+        - Less than 20% of params are absent (validates probe quality)
+
+        Args:
+            param_list: List of parameter names to check
+
+        Returns:
+            Set of unsupported parameters, or empty set if conditions not met
+        """
+        # Must be enabled
+        if self._manual_disabled:
+            return set()
+
+        # Load cached data
+        cached_data = self.load_cached_data()
+        if not cached_data:
+            return set()
+
+        # Must be in OK state
+        if cached_data['state'] != STATE_OK:
+            return set()
+
+        params = cached_data['params']
+        param_set = set(param_list)
+        absent = param_set - params
+
+        # Validate probe quality: no more than 20% absent
+        if len(param_set) > 0:
+            absent_ratio = len(absent) / len(param_set)
+            if absent_ratio > ABSENT_THRESHOLD:
+                # Probe results seem unreliable
+                return set()
+
+        return absent
+
 
 def main():
     """CLI entry point for standalone testing"""
@@ -251,62 +397,45 @@ def main():
         help='Force regeneration, ignore cached results'
     )
     parser.add_argument(
-        '--config-dir',
-        type=Path,
-        help='Config directory (default: ~/.config/grub-wiz/)'
-    )
-    parser.add_argument(
         '--compare',
         type=str,
         help='Compare against comma-separated list of expected params'
     )
+    parser.add_argument(
+        '--disable',
+        action='store_true',
+        help='Disable parameter discovery'
+    )
+    parser.add_argument(
+        '--enable',
+        action='store_true',
+        help='Enable parameter discovery'
+    )
 
     args = parser.parse_args()
 
-    # Run discovery
-    discovery = ParamDiscovery(config_dir=args.config_dir)
-    params = discovery.get_system_params(force_regenerate=args.regenerate)
+    # Initialize discovery
+    discovery = ParamDiscovery()
 
-    # Load and display status
-    cached_data = discovery.load_cached_data()
+    # Handle enable/disable
+    if args.disable:
+        discovery.manual_enable(False)
+        print("Parameter discovery disabled")
+        return
+    if args.enable:
+        discovery.manual_enable(True)
+        print("Parameter discovery enabled")
 
-    print(f"\n{'='*60}")
-    print(f"Discovered Parameters ({len(params)} total):")
-    print(f"{'='*60}")
+    # Run discovery (ensures cache is fresh)
+    discovery.get_system_params(force_regenerate=args.regenerate)
 
-    if cached_data:
-        print(f"Status: {cached_data['state']}")
-        age_days = (int(time.time()) - cached_data['timestamp']) / (24 * 60 * 60)
-        print(f"Cache age: {age_days:.1f} days")
-        print()
-
-    for param in sorted(params):
-        print(f"  {param}")
-
-    print(f"\nCache location: {discovery.cache_file}")
-
-    # Optional comparison
+    # Display results using dump() method
+    print()
     if args.compare:
-        expected = {p.strip() for p in args.compare.split(',')}
-        missing = expected - params
-        extra = params - expected
-
-        print(f"\n{'='*60}")
-        print("Comparison Results:")
-        print(f"{'='*60}")
-
-        if missing:
-            print(f"\nMissing (expected but not found): {len(missing)}")
-            for p in sorted(missing):
-                print(f"  - {p}")
-
-        if extra:
-            print(f"\nExtra (found but not expected): {len(extra)}")
-            for p in sorted(extra):
-                print(f"  + {p}")
-
-        if not missing and not extra:
-            print("\n✓ Perfect match!")
+        param_list = [p.strip() for p in args.compare.split(',')]
+        discovery.dump(param_list)
+    else:
+        discovery.dump()
 
 
 if __name__ == '__main__':

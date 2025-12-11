@@ -1,60 +1,20 @@
-#!/usr/bin/env python3 
+#!/usr/bin/env python3
 import os
 import sys
 import shutil
 import hashlib
 import re
-import pwd # Needed for user lookup
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Union, List
+from typing import Dict, Optional, Union
 
-# --- The Core Fix: Reliable User Information ---
-
-def get_real_user_info(app_name: str) -> dict:
-    """
-    Identifies the real user who initiated the script, regardless of sudo settings, 
-    by prioritizing os.getlogin().
-    Returns: {'home': Path, 'uid': int, 'gid': int, 'config_dir': Path}
-    """
-    # 1. Try to get the login name of the terminal owner (most reliable non-root check)
-    real_username = None
-    try:
-        real_username = os.getlogin()
-    except OSError:
-        # Fallback to SUDO_USER if getlogin fails (e.g., in some service contexts)
-        real_username = os.environ.get('SUDO_USER')
-        
-    if real_username:
-        try:
-            # Get user info structure based on the determined username
-            user_info = pwd.getpwnam(real_username)
-            
-            return {
-                'home': Path(user_info.pw_dir),
-                'uid': user_info.pw_uid,
-                'gid': user_info.pw_gid,
-                'config_dir': Path(user_info.pw_dir) / ".config" / app_name
-            }
-        except KeyError:
-            # User lookup failed (e.g., deleted account or bad SUDO_USER)
-            pass 
-
-    # 2. Default to the current effective user's information (usually 'root' if running as root)
-    # This acts as a final fallback, using the current home directory and effective UIDs.
-    return {
-        'home': Path.home(),
-        'uid': os.geteuid(),
-        'gid': os.getegid(),
-        'config_dir': Path.home() / ".config" / app_name
-    }
-
+from .UserConfigDir import get_user_config_dir
 
 # --- Constants ---
 
 GRUB_DEFAULT_PATH = Path("/etc/default/grub")
-USER_INFO = get_real_user_info("grub-wiz")
-GRUB_CONFIG_DIR = USER_INFO['config_dir']
+USER_CONFIG = get_user_config_dir("grub-wiz")
+GRUB_CONFIG_DIR = USER_CONFIG.config_dir
 
 # Regex pattern for identifying backup files: YYYYMMDD-HHMMSS-{CHECKSUM}.{TAG}.bak
 BACKUP_FILENAME_PATTERN = re.compile(
@@ -68,29 +28,13 @@ class BackupMgr:
     Manages backups for the /etc/default/grub configuration file.
     Backups are stored in the real user's ~/.config/grub-wiz/ location.
     """
-    
-    def __init__(self, target_path: Path = GRUB_DEFAULT_PATH, config_dir: Path = GRUB_CONFIG_DIR, user_info: dict = USER_INFO):
-        self.target_path = target_path
-        self.config_dir = config_dir
-        self.target_uid = user_info['uid']
-        self.target_gid = user_info['gid']
-        
-        # Ensure the config directory exists upon instantiation
-        self._ensure_config_dir()
 
-    def _ensure_config_dir(self):
-        """
-        Ensures the backup directory exists and is owned by the real user.
-        """
-        try:
-            self.config_dir.mkdir(parents=True, exist_ok=True)
-            # Ensure the directory is owned by the real user so they can manage backups later
-            if os.geteuid() == 0: # Only change ownership if running as root
-                os.chown(self.config_dir, self.target_uid, self.target_gid)
-            
-        except Exception as e:
-            print(f"Error: Could not ensure backup directory {self.config_dir} exists: {e}", file=sys.stderr)
-            sys.exit(1)
+    def __init__(self, target_path: Path = GRUB_DEFAULT_PATH, user_config=None):
+        self.target_path = target_path
+
+        # Use provided user_config or get singleton
+        self.user_config = user_config if user_config else USER_CONFIG
+        self.config_dir = self.user_config.config_dir
 
     # --- calc_checksum, get_backups, and restore_backup remain the same ---
     # (Leaving these out for brevity in the response, but they are included in the full file block)
@@ -173,12 +117,9 @@ class BackupMgr:
         try:
             # Copy the file to the backup location (done as root)
             shutil.copy2(target, new_backup_path)
-            
-            # --- CRITICAL FIX: Change ownership to the real user ---
-            # Only required if we are running as root (os.geteuid() == 0)
-            if os.geteuid() == 0:
-                os.chown(new_backup_path, self.target_uid, self.target_gid)
-            # -----------------------------------------------------
+
+            # Set ownership to real user
+            self.user_config.give_to_user(new_backup_path, mode=0o644)
 
             print(f"Success: Created new backup: {new_backup_path.name}")
             return new_backup_path

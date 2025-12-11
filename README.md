@@ -1,10 +1,8 @@
->  **This project is very early in development ... come back later.**
+>  **This project is under development ... come back later.**
 
-## GrubWiz: The Friendly GRUB Bootloader Assistant
+## GrubWiz: The Helpful GRUB Bootloader Assistant
 
-A safe, simple, and reliable Text User Interface (TUI) utility for managing the most common GRUB bootloader configuration tasks on Linux systems.
-
-GrubWiz provides the ease-of-use of a graphical configurator without the dependency bloat or the reputation for complex, destructive changes. It operates strictly on configuration files, making safe backups before every change.
+GrubWiz is a safe, simple, and reliable Text User Interface (TUI) utility for managing the most common GRUB bootloader configuration tasks on Linux systems.
 
 #### Why Use GrubWiz?
 
@@ -13,32 +11,30 @@ Dealing with `/etc/default/grub` and running `update-grub` manually is tedious a
 GrubWiz solves this by focusing on core functionality and system safety:
   * ✅ Safety First: Always creates a timestamped backup of your current GRUB configuration before applying any changes.
   * 💻 Curses Interface: Lightning-fast, lightweight TUI works across all environments (local, SSH, minimal installs) without requiring a desktop environment.
-  * ⚙️ Targeted Configuration: Focuses only on the most essential and common configuration tasks, minimizing risk.
+  * ⚙️ Targeted Configuration: Focuses on the most essential and common configuration tasks, minimizing risk.
 
 #### Core Features
 
 GrubWiz makes complex, manual configuration steps as easy as a few keystrokes in a clean interface:
-1. **Boot Entry Management** TODO
-    * Reorder Entries: Easily move boot entries up or down the list to change the default boot option or preferred order.
-    * Set Default: Select the specific entry that should boot automatically.
+* **Safer editing:**
+  * Only valid parameter names are offered.
+  * For parameters with a fix set values or typical values, you can select from the choices preventing typos.
+  * When you need to edit parameters, they are checked against a "regex" for validity preventing very wrong entries
+  * In its "review" screen, cross-parameter and sensibility checks are done and issues are presented with a chance to fix them immediately.
 
-2. **Boot Parameters Editor** IP
-    * Simple Parameter Toggles: Visually add, remove, or modify common kernel parameters (e.g., nomodeset, quiet, splash).
-    * Custom Arguments: Add any custom arguments you need for specific hardware or debugging.
+* **Handles "Unknown" Parameters**
+  * In the case, a parameters is not supported, you can manually add it to `/etc/default/grub` and the supported and unsupported parameters will be combined.
+  * Before committing, `grub-script-check` is run to catch syntax errors on the combination grub file.
 
-3. **Timeout Control** IP
-    * Set Timeout: Quickly adjust the display duration of the GRUB menu (in seconds) via a simple numeric input.
-    * Hide Menu: Option to set the timeout to zero for fast, non-interactive booting.
+* **Backup / Restore**
+  * When loading and before saving, if the contents is different that other saved backups, you are prompted to name a new backup.
+  * In the restore screen, you can restore backups, delete backups, (TODO) retag backups.
 
-4. **Configuration Safety & Deployment** TODO
-    * Automatic Backup: A compressed, timestamped backup is made before any file write. Recovery is straightforward.
-    * Preview Changes: Review the final $GRUB_CONFIG_FILE content before it is written and update-grub is executed.
-    * Configuration Validation: Basic checks to ensure the output configuration is syntactically correct before deployment.
-
-#### Installation (Hypothetical)
+#### Installation and Running
 
 * `grub-wiz` is available on PyPI and installed via: `pipx install grub-wiz`
-* `grub-wiz` makes itself root using `sudo` and will prompt for password when needed.
+* Typically, just run `grub-wiz` w/o arguments
+* **Note**: `grub-wiz` makes itself root using `sudo` and will prompt for password if needed.
 
 #### How to Use grub-wiz
 Running `grub-wiz` brings up a screen like:
@@ -80,6 +76,14 @@ Backup and restore features:
  - tags must be word/phase-like strings with only [-_A-Za-z0-9] characters.
  - there is a `[R]estore` menu item that brings up a screen which is a list of backups; you can delete and restore backups
  - if an entry is restored, the program re-initializes using restored grub file and returns to main screen
+ 
+#### Parameter Discovery
+Because GRUB can vary per system, `grub-wiz` uses `info -f grub -n "Simple Configuration"` to discover which parameters are actually supported. Parameters not found on your system are automatically removed by `grub-wiz` from its screens. Notes:
+- We recommend installing GRUB documentation for best results:
+    - Ubuntu/Debian: `sudo apt install grub-doc`
+    - Fedora/RHEL: `sudo dnf install grub2-common`
+- If `info` provides inaccurate results, you can disable discovery:
+    - `grub-wiz --discovery=disable` (use "enable" or "show" for other actions)
 
 👨‍💻 Development Status
 

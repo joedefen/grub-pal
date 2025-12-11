@@ -20,70 +20,45 @@ DEFAULT HIDES:
     GRUB_BADRAM (rare hardware issue)
 """
 
-import os
 from ruamel.yaml import YAML
 from pathlib import Path
 from typing import Set, Dict, Any, Optional
 
-# --- Assume these constants are defined elsewhere in your project ---
-# GRUB_DEFAULT_PATH = Path('/etc/default/grub')
-# GRUB_CONFIG_DIR = Path('/home/user/.config/grub-wiz') # The real user's config directory
-# USER_INFO = {'uid': 1000, 'gid': 1000} # Real user's UID/GID
-
-# ---
+from .UserConfigDir import get_user_config_dir
 
 yaml = YAML()
 yaml.default_flow_style = False
 
-class BackupMgr:
-    """
-    Manages backups and provides user/directory context.
-    (Placeholder class mirroring the structure you provided)
-    """
-    def __init__(self, target_path: Path, config_dir: Path, user_info: Dict[str, int]):
-        self.target_path = target_path
-        self.config_dir = config_dir
-        self.target_uid = user_info['uid']
-        self.target_gid = user_info['gid']
 
 class WizHider:
     """
     Manages the persistent storage and state for hidden parameters and suppressed warnings.
+    Supports both hard-hiding (excluded from everything) and soft-hiding (hidden from UI
+    but still validated and written to config).
     """
-    
-    def __init__(self, backup_manager: BackupMgr, filename: str = 'hidden-items.yaml'):
+
+    def __init__(self, user_config=None, filename: str = 'hidden-items.yaml'):
         """
-        Initializes the class, creates the config directory if necessary, 
+        Initializes the class, creates the config directory if necessary,
         and performs the initial read/refresh.
+
+        Args:
+            user_config: UserConfigDir instance (uses singleton if not provided)
+            filename: Name of the YAML file to store hidden items
         """
-        self.config_dir: Path = backup_manager.config_dir
+        self.user_config = user_config if user_config else get_user_config_dir("grub-wiz")
+        self.config_dir: Path = self.user_config.config_dir
         self.yaml_path: Path = self.config_dir / filename
-        self.target_uid: int = backup_manager.target_uid
-        self.target_gid: int = backup_manager.target_gid
-        
-        self.hard_params: Set[str] = set()       # e.g., {'GRUB_DEFAULT'}
-        self.soft_params: Set[str] = set()       # e.g., {'GRUB_DEFAULT'}
-        self.warns: Set[str] = set()        # e.g., {'GRUB_DEFAULT.3'} (3 for ***)
+
+        self.hard_params: Set[str] = set()  # Hard-hidden params (excluded from everything)
+        self.soft_params: Set[str] = set()  # Soft-hidden params (hidden from UI only)
+        self.warns: Set[str] = set()        # Suppressed warnings (e.g., 'GRUB_DEFAULT.3')
         self.dirty_count: int = 0
         self.last_read_time: Optional[float] = None
-        
-        # Ensure directory exists and has correct permissions
-        self._setup_config_dir()
-        
-        # Suck up the file on startup (initial refresh)
-        self.refresh()
 
-    def _setup_config_dir(self):
-        """Creates the config directory and sets ownership/permissions."""
-        if not self.config_dir.exists():
-            try:
-                # Create directory, setting permission to 0o700 (rwx for owner only)
-                self.config_dir.mkdir(parents=True, mode=0o700)
-                # Change ownership to the target user/group
-                os.chown(self.config_dir, self.target_uid, self.target_gid)
-            except OSError as e:
-                print(f"Error setting up config directory {self.config_dir}: {e}")
-                # Failure here is critical, but we let the read/write methods handle file errors
+        # Suck up the file on startup (initial refresh)
+        # Note: config_dir is already created by UserConfigDir
+        self.refresh()
 
     def refresh(self):
         """Reads the hidden items from the YAML file, clearing the current state on failure."""
@@ -116,28 +91,26 @@ class WizHider:
         """Writes the current hidden state to disk if the dirty count is > 0."""
         if self.dirty_count == 0:
             return False
-            
+
         data = {
             'hard_params': sorted(list(self.hard_params)),
             'soft_params': sorted(list(self.soft_params)),
             'warns': sorted(list(self.warns))
         }
-        
+
         try:
             # 1. Write the file
             with self.yaml_path.open('w') as f:
                 yaml.dump(data, f)
-            
-            # 2. Correct ownership and permissions (crucial when running as root)
-            # Permission 0o600 (rw for owner only) is typical for config files
-            os.chown(self.yaml_path, self.target_uid, self.target_gid)
-            os.chmod(self.yaml_path, 0o600) 
-            
+
+            # 2. Set ownership and permissions (crucial when running as root)
+            self.user_config.give_to_user(self.yaml_path, mode=0o600)
+
             # 3. Update state
             self.dirty_count = 0
             self.last_read_time = self.yaml_path.stat().st_mtime
             return True
-            
+
         except OSError as e:
             print(f"Error writing or setting permissions on hidden-items.yaml: {e}")
             return False
@@ -161,12 +134,12 @@ class WizHider:
             self.dirty_count += 1
 
     def unhide_param(self, name: str):
-        """Unhides a parameter by name."""
+        """Unhides a parameter by name (removes from both hard and soft)."""
         if name in self.hard_params:
-            self.params.remove(name)
+            self.hard_params.remove(name)
             self.dirty_count += 1
         if name in self.soft_params:
-            self.params.remove(name)
+            self.soft_params.remove(name)
             self.dirty_count += 1
 
     def hide_warn(self, composite_id: str):

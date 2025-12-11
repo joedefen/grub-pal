@@ -25,6 +25,7 @@ from .BackupMgr import BackupMgr, GRUB_DEFAULT_PATH
 from .WizHider import WizHider
 from .GrubWriter import GrubWriter
 from .WizValidator import WizValidator
+from .ParamDiscovery import ParamDiscovery
 
 HOME_ST, REVIEW_ST, RESTORE_ST, HELP_ST = 0, 1, 2, 3  # screen numbers
 SCREENS = ('HOME', 'REVIEW', 'RESTORE', 'HELP') # screen names
@@ -128,6 +129,7 @@ class GrubWiz:
         self.positions = None
         self.seen_positions = None
         self.prev_pos = None
+        self.defined_param_names = None # all of them
         self.param_names = None
         self.param_values = None
         self.param_defaults = None
@@ -136,8 +138,9 @@ class GrubWiz:
         self.param_name_wid = 0
         self.menu_entries = None
         self.backup_mgr = BackupMgr()
-        self.hider = WizHider(self.backup_mgr)
+        self.hider = WizHider()
         self.grub_writer = GrubWriter()
+        self.param_discovery = ParamDiscovery()
         self.wiz_validator = None
         self.backups = None
         self.ordered_backup_pairs = None
@@ -156,6 +159,14 @@ class GrubWiz:
         self.must_reviews = None
         self.ss = None
         self.sections = CannedConfig().data
+
+        names = []
+        for idx, (section, params) in enumerate(self.sections.items()):
+            for name in params.keys():
+                names.append(name)
+        absent_param_names = set(self.param_discovery.get_absent(names))
+        self.defined_param_names = names
+
         for idx, (section, params) in enumerate(self.sections.items()):
             if idx > 0: # blank line before sections except 1st
                 self.positions.append( SimpleNamespace(
@@ -163,6 +174,8 @@ class GrubWiz:
             self.positions.append( SimpleNamespace(
                 param_name=None, section_name=section))
             for param_name, payload in params.items():
+                if param_name in absent_param_names:
+                    continue
                 self.param_cfg[param_name] = payload
                 self.positions.append(SimpleNamespace(
                     param_name=param_name, section_name=None))
@@ -777,6 +790,9 @@ def main():
     """ TBD """
     rerun_module_as_root('grub_wiz.main')
     parser = ArgumentParser(description='grub-wiz: your grub-update guide')
+    parser.add_argument('--discovery', '--parameter-discovery', default=None,
+                        choices=('enable', 'disable', 'show'),
+                        help='control/show parameter discovery state')
     parser.add_argument('--validator-demo', action='store_true',
                         help='for test only: run validator demo')
     opts = parser.parse_args()
@@ -785,10 +801,20 @@ def main():
     if opts.validator_demo:
         wiz.wiz_validator.demo(wiz.param_defaults)
         sys.exit(0)
+    if opts.discovery is not None:
+        if opts.discovery in ('enable', 'disable'):
+            enabled = wiz.param_discovery.manual_enable(opts.paramd == 'enable')
+            print(f'\nParameterDiscovery: {enabled=}')
+        else:
+            wiz.param_discovery.dump(wiz.defined_param_names)
+            absent_params = wiz.param_discovery.get_absent(wiz.defined_param_names)
+            print(f'\nPruned {absent_params=}')
+        sys.exit(0)
 
 
+            
 
-    time.sleep(0.5)
+    time.sleep(1.0)
     wiz.main_loop()
 
 if __name__ == '__main__':
