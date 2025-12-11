@@ -137,6 +137,33 @@ Official Linux Kernel Documentation (Current): Search for the `kernel-parameters
 
 
 #### HIDE FEATURE
+######
+
+
+Parameter Coverage grub-wiz manages 26 GRUB parameters covering 99% of home and server use cases:
+* Boot timeout & menu configuration
+* Kernel command-line arguments
+* Visual appearance (themes, backgrounds, resolution)
+* Security (encryption, UUIDs)
+* Advanced features (serial console, recovery mode, etc.)
+
+Automatic System Detection On first run, grub-wiz attempts to discover which parameters your system supports by parsing GRUB documentation:
+* ✅ If info grub is available: Parameters not supported on your system are automatically hard-hidden
+* ⚠️ If GRUB docs aren't installed: All 26 parameters remain visible (you can manually hide unused ones)
+To improve detection accuracy, install GRUB documentation:
+```
+sudo apt install grub-doc # Ubuntu/Debian
+sudo dnf install grub2-common # Fedora/RHEL
+```
+
+Hard vs Soft Hiding
+* Hard hide: Parameter excluded from interface, validation, and config file
+  * Use hard-hide for unsupported/irrelevant params (e.g., Xen settings on non-Xen systems)
+* Soft hide: Hidden from main interface but still managed and validated
+  Use soft-hide for "set once and forget" params (e.g., DISTRIBUTOR)
+
+
+######
 👍 Gains of the Hide/Suppress Feature
 
 This feature addresses the core tension between offering comprehensive configuration and avoiding user annoyance.
