@@ -225,6 +225,8 @@ class GrubWiz:
                         category='action', keys=[ord('C'), cs.KEY_LEFT, cs.KEY_BACKSPACE])
         spinner.add_key('edit', 'e,ENTER - edit value', category='action',
                             keys=[ord('e'), 10, 13])
+        spinner.add_key('expert_edit', 'E - expert edit (minimal validation)', category='action',
+                            keys=[ord('E')])
         spinner.add_key('guide', 'g - guidance toggle', vals=[False, True])
         spinner.add_key('hide', 'h - toggle hidden param or warning', category='action')
         spinner.add_key('show_hidden', 's - show hidden params/warnings', vals=[False, True])
@@ -574,7 +576,55 @@ class GrubWiz:
                 win.flash('Invalid input - please try again', duration=1.5)
 
         self.param_values[name] = value
-        
+
+    def expert_edit_param(self, win, name):
+        """ Expert mode edit with minimal validation - escape hatch for grub-wiz errors """
+        value = self.param_values[name]
+        valid = False
+        hint = 'expert mode: minimal checks'
+
+        while not valid:
+            prompt = f'Edit {name} [EXPERT MODE: {hint}]'
+            value = win.answer(prompt=prompt, seed=str(value), height=2, esc_abort=True)
+            if value is None: # aborted
+                return
+
+            # Minimal validation: ensure it's a safe shell token
+            # Allow: empty, unquoted word, single-quoted, or double-quoted
+            valid = True
+            if value and not self._is_valid_shell_token(value):
+                valid = False
+                hint = 'must be empty, word, or quoted string'
+                win.flash('Invalid shell token - check quoting', duration=1.5)
+
+        self.param_values[name] = value
+
+    def _is_valid_shell_token(self, value):
+        """ Check if value is a valid shell token (minimal safety check) """
+        if not value:  # empty is valid
+            return True
+
+        # Single-quoted: everything between quotes is literal
+        if value.startswith("'") and value.endswith("'") and len(value) >= 2:
+            return True
+
+        # Double-quoted: check for balanced quotes
+        if value.startswith('"') and value.endswith('"') and len(value) >= 2:
+            # Basic check: allow escaped quotes, but no bare unescaped quotes inside
+            inner = value[1:-1]
+            # Replace escaped quotes, then check for any remaining unescaped quotes
+            check = inner.replace('\\"', '')
+            return '"' not in check
+
+        # Unquoted word: no spaces or special shell chars
+        if ' ' in value or '\t' in value or '\n' in value:
+            return False
+        # Disallow dangerous shell chars in unquoted strings
+        dangerous = set(';&|<>(){}[]$`\\!')
+        if any(c in value for c in dangerous):
+            return False
+
+        return True
 
     def refresh_backup_list(self):
         """ TBD """
@@ -762,6 +812,10 @@ class GrubWiz:
                 if self.ss.act_in('edit', (HOME_ST, REVIEW_ST)):
                     if regex:
                         self.edit_param(win, name, regex)
+
+                if self.ss.act_in('expert_edit', (HOME_ST, REVIEW_ST)):
+                    if name:
+                        self.expert_edit_param(win, name)
 
                 if self.ss.act_in('hide', (HOME_ST, REVIEW_ST)):
                     if self.ss.is_curr(HOME_ST) and name:

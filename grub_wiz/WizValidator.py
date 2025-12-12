@@ -206,206 +206,192 @@ class WizValidator:
                 warns[param] = []
             warns[param].append((stars[severity], message))
 
+        def getvals(*keys):
+            """ Returns (k1, v1, k2, v2, ...), or a sequence of
+                 None values if a key is missing. """
+            nonlocal vals
+            num_keys = len(keys)
+            if all(key in vals for key in keys):
+                result_pairs = ((key, vals[key]) for key in keys)
+                return sum(result_pairs, ())
+            return tuple([None] * (num_keys * 2))
+
+        def hey_if(bad, param_name, severity, message):
+            if bad:
+                hey(param_name, severity, message)
+        # ------------------------------------------------ #
+
         stars = [''] + '* ** *** ****'.split()
         warns = {}
         layout = self.probe_disk_layout()
 
         # if _DEFAULT is saved, then _SAVEDEFAULT must be true
-        p1, p2 = 'GRUB_DEFAULT', 'GRUB_SAVEDEFAULT'
-        if vals[p1] in quotes('saved'):
-            if vals[p2] not in quotes('true'):
-                hey(p2, 4, f'must be "true" since {sh(p1)} is "saved"')
+        p1, v1, p2, v2 = getvals('GRUB_DEFAULT', 'GRUB_SAVEDEFAULT')
+        bad = p1 and v1 in quotes('saved') and v2 not in quotes('true')
+        hey_if(bad, p2, 4, f'must be "true" since {sh(p1)} is "saved"')
 
-        # --- Best Practice Check 1: TIMEOUT=0 & TIMEOUT_STYLE=hidden ---
-        p1, p2 = 'GRUB_TIMEOUT', 'GRUB_TIMEOUT_STYLE'
-        # Check if TIMEOUT is 0 (or equivalent) AND the style is 'hidden'
-        is_zero_timeout = (
-            vals.get(p1) in quotes('0') or
-            vals.get(p1) in quotes('0.0')
-        )
-        if is_zero_timeout and vals.get(p2) in quotes('hidden'):
-            # critical because it leads to an unrecoverable state
-            hey(p1, 4 , f'should be positive int when {sh(p2)}="hidden"')
+        # TIMEOUT=0 & TIMEOUT_STYLE=hidden (critical - unrecoverable state)
+        p1, v1, p2, v2 = getvals('GRUB_TIMEOUT', 'GRUB_TIMEOUT_STYLE')
+        bad = p1 and (v1 in quotes('0') or v1 in quotes('0.0')) and v2 in quotes('hidden')
+        hey_if(bad, p1, 4, f'should be positive int when {sh(p2)}="hidden"')
 
-
-        # --- Critical Check 3: TIMEOUT is > 0 but TIMEOUT_STYLE is NOT menu ---
-        p1, p2 = 'GRUB_TIMEOUT', 'GRUB_TIMEOUT_STYLE'
-
-        timeout_val = unquote(vals.get(p1, '0'))
-        timeout_style = vals.get(p2)
-
-        # Check if TIMEOUT is a positive number
+        # TIMEOUT > 0 but TIMEOUT_STYLE is NOT menu
+        p1, v1, p2, v2 = getvals('GRUB_TIMEOUT', 'GRUB_TIMEOUT_STYLE')
+        is_positive = False
         try:
-            is_positive_timeout = float(timeout_val) > 0
-        except ValueError:
-            # If it's not a number (e.g., 'infinity'), skip this check.
-            is_positive_timeout = False
+            is_positive = p1 and float(unquote(v1)) > 0
+        except (ValueError, TypeError):
+            pass
+        bad = is_positive and v2 not in quotes('menu')
+        hey_if(bad, p2, 4, f'should be "menu" when {sh(p1)} > 0')
 
-        # Check if the style is not explicitly set to 'menu'
-        is_not_menu = timeout_style not in quotes('menu')
+        # 'quiet' belongs only in GRUB_CMDLINE_LINUX_DEFAULT
+        p1, v1, p2, v2 = getvals('GRUB_CMDLINE_LINUX_DEFAULT', 'GRUB_CMDLINE_LINUX')
+        bad = p2 and 'quiet' in v2
+        hey_if(bad, p2, 3, f'"quiet" belongs only in {sh(p1)}')
 
-        if is_positive_timeout and is_not_menu:
-            # If the user sets a timeout > 0, they expect to see the menu.
-            # If the style is not 'menu', they may miss it or not see it at all.
-            hey(p2, 4, f'should be "menu" when {sh(p1)} > 0')
+        # 'splash' belongs only in GRUB_CMDLINE_LINUX_DEFAULT
+        p1, v1, p2, v2 = getvals('GRUB_CMDLINE_LINUX_DEFAULT', 'GRUB_CMDLINE_LINUX')
+        bad = p2 and 'splash' in v2
+        hey_if(bad, p2, 3, f'"splash" belongs only in {sh(p1)}')
 
+        # LUKS active but no rd.luks.uuid in GRUB_CMDLINE_LINUX
+        p1, v1 = getvals('GRUB_CMDLINE_LINUX')
+        bad = p1 and layout.is_luks_active and 'rd.luks.uuid=' not in v1
+        hey_if(bad, p1, 3, 'no "rd.luks.uuid=" but LUKS seems active')
 
-        # --- Best Practice Check 2: 'quiet' only in GRUB_CMDLINE_LINUX_DEFAULT ---
-        p1, p2 = 'GRUB_CMDLINE_LINUX_DEFAULT', 'GRUB_CMDLINE_LINUX'
-        if 'quiet' in vals[p2]:
-            # Having 'quiet' in _LINUX prevents seeing text even in recovery/single user mode
-            hey(p2, 3, f'"quiet" belongs only in {sh(p1)}')
-        if 'splash' in vals[p2]:
-            # Having 'splash' in _LINUX prevents seeing text even in recovery/single user mode
-            hey(p2, 3, f'"splash" belongs only in {sh(p1)}')
+        # LVM active but no rd.lvm.vg in GRUB_CMDLINE_LINUX
+        p1, v1 = getvals('GRUB_CMDLINE_LINUX')
+        bad = p1 and layout.is_lvm_active and 'rd.lvm.vg=' not in v1
+        hey_if(bad, p1, 3, 'no "rd.lvm.vg=" but LVM seems active')
 
-        if layout.is_luks_active and 'rd.luks.uuid=' not in vals[p2]:
-            hey(p2, 3, 'no "rd.luks.uuid=" but LUKS seems active')
-        if layout.is_lvm_active and 'rd.lvm.vg=' not in vals[p2]:
-            hey(p2, 3, 'no "rd.lvm.vg=" but LVM seems active')
+        # ENABLE_CRYPTODISK without LUKS
+        p1, v1 = getvals('GRUB_ENABLE_CRYPTODISK')
+        bad = p1 and v1 in quotes('true') and not layout.is_luks_active
+        hey_if(bad, p1, 1, 'enabled but no LUKS encryption detected')
 
-        # --- Best Practice Check 3: ENABLE_CRYPTODISK without LUKS ---
-        p1 = 'GRUB_ENABLE_CRYPTODISK'
-        if vals.get(p1) in quotes('true') and not layout.is_luks_active:
-            hey(p1, 1, 'enabled but no LUKS encryption detected')
+        # Recovery cmdline set but recovery disabled
+        p1, v1, p2, v2 = getvals('GRUB_CMDLINE_LINUX_RECOVERY', 'GRUB_DISABLE_RECOVERY')
+        bad = p1 and v1 and v2 in quotes('true')
+        hey_if(bad, p1, 2, f'set but {sh(p2)}="true" disables recovery mode')
 
-        # --- Best Practice Check 4: Recovery cmdline set but recovery disabled ---
-        p1, p2 = 'GRUB_CMDLINE_LINUX_RECOVERY', 'GRUB_DISABLE_RECOVERY'
-        if vals.get(p1) and vals.get(p2) in quotes('true'):
-            hey(p1, 2, f'set but {sh(p2)}="true" disables recovery mode')
+        # Both UUID types disabled (fragile config)
+        p1, v1, p2, v2 = getvals('GRUB_DISABLE_LINUX_UUID', 'GRUB_DISABLE_LINUX_PARTUUID')
+        bad = p1 and v1 in quotes('true') and v2 in quotes('true')
+        hey_if(bad, p1, 2, 'using device names for everything is fragile')
+        hey_if(bad, p2, 2, 'using device names for everything is fragile')
 
-        # --- Best Practice Check 5: Both UUID types disabled (fragile config) ---
-        p1, p2 = 'GRUB_DISABLE_LINUX_UUID', 'GRUB_DISABLE_LINUX_PARTUUID'
-        if vals.get(p1) in quotes('true') and vals.get(p2) in quotes('true'):
-            hey(p1, 2, 'using device names for everything is fragile')
-            hey(p2, 2, 'using device names for everything is fragile')
+        # Terminal INPUT should match OUTPUT when serial
+        p1, v1, p2, v2 = getvals('GRUB_TERMINAL_INPUT', 'GRUB_TERMINAL_OUTPUT')
+        val_in = unquote(v1) if v1 else 'console'
+        val_out = unquote(v2) if v2 else ''
+        bad = p1 and val_out and val_in != val_out and 'serial' in val_out
+        hey_if(bad, p1, 2, f'should match {sh(p2)} when it is "serial"')
 
-        # --- Best Practice Check 6: Terminal I/O mismatch ---
-        p1, p2 = 'GRUB_TERMINAL_INPUT', 'GRUB_TERMINAL_OUTPUT'
-        val_in = unquote(vals.get(p1, 'console'))
-        val_out = unquote(vals.get(p2, ''))
-        if val_out and val_in != val_out:
-            if 'serial' in val_out:
-                hey(p1, 2, f'should match {sh(p2)} when it is "serial"')
-            if 'serial' in val_in:
-                hey(p2, 2, f'should match {sh(p1)} when it is "serial"')
+        # Terminal OUTPUT should match INPUT when serial
+        p1, v1, p2, v2 = getvals('GRUB_TERMINAL_INPUT', 'GRUB_TERMINAL_OUTPUT')
+        val_in = unquote(v1) if v1 else 'console'
+        val_out = unquote(v2) if v2 else ''
+        bad = p2 and val_out and val_in != val_out and 'serial' in val_in
+        hey_if(bad, p2, 2, f'should match {sh(p1)} when it is "serial"')
 
-        # --- Best Practice Check 7: Serial config consistency ---
-        p1, p2, p3 = 'GRUB_SERIAL_COMMAND', 'GRUB_TERMINAL_INPUT', 'GRUB_TERMINAL_OUTPUT'
-        serial_cmd = vals.get(p1, '')
-        term_in = unquote(vals.get(p2, 'console'))
-        term_out = unquote(vals.get(p3, ''))
-        if serial_cmd and 'serial' not in term_out and 'serial' not in term_in:
-            hey(p1, 2, f'set but neither {sh(p2)} or {sh(p3)} are "serial"')
-        if 'serial' in term_in:
-            hey(p2, 2, f'"serial" requires {sh(p1)} to be set')
-        if 'serial' in term_out:
-            hey(p3, 2, f'"serial" requires {sh(p1)} to be set')
+        # SERIAL_COMMAND set but neither terminal is serial
+        p1, v1, p2, v2, p3, v3 = getvals('GRUB_SERIAL_COMMAND', 'GRUB_TERMINAL_INPUT', 'GRUB_TERMINAL_OUTPUT')
+        term_in = unquote(v2) if v2 else 'console'
+        term_out = unquote(v3) if v3 else ''
+        bad = p1 and v1 and 'serial' not in term_out and 'serial' not in term_in
+        hey_if(bad, p1, 2, f'set but neither {sh(p2)} or {sh(p3)} are "serial"')
 
-        # --- Advanced Check 1: SAVEDEFAULT=true but DEFAULT is numeric ---
-        # The GRUB documentation discourages this because a numeric default can change
-        # if the menu entries are reordered.
-        p1, p2 = 'GRUB_SAVEDEFAULT', 'GRUB_DEFAULT'
-        if vals[p1] in quotes('true'):
-            default_value = vals.get(p2, '0') # Default to '0' if missing
-            # A simple check for numeric (excluding "saved", "menuentry title", etc.)
-            if unquote(default_value).isdigit():
-                hey(p2, 1, f'avoid numeric when {sh(p1)}="true"')
+        # TERMINAL_INPUT is serial but no SERIAL_COMMAND
+        p1, v1, p2, v2 = getvals('GRUB_SERIAL_COMMAND', 'GRUB_TERMINAL_INPUT')
+        term_in = unquote(v2) if v2 else 'console'
+        bad = p2 and 'serial' in term_in and not v1
+        hey_if(bad, p2, 2, f'"serial" requires {sh(p1)} to be set')
 
-        # --- Common Mistake Check 1: Unquoted values in CMDLINEs ---
-        # The main issue is checking if a value that *needs* quotes is unquoted.
-        # We assume any value containing spaces needs to be quoted.
-        for p in ['GRUB_CMDLINE_LINUX', 'GRUB_CMDLINE_LINUX_DEFAULT']:
-            value = vals.get(p)
-            # If the value contains a space...
-            if value is not None and ' ' in value:
-                # ... and it is not quoted in single or double quotes
-                # The 'quotes()' helper returns raw, "...", and '...' forms.
-                # If the value is not in any of the quoted forms generated by passing the raw value,
-                # we issue a warning. (A more robust check would look at the raw config input.)
-                if value not in quotes(unquote(value)):
-                    hey(p, 2, 'has spaces and thus must be quoted')
+        # TERMINAL_OUTPUT is serial but no SERIAL_COMMAND
+        p1, v1, p2, v2 = getvals('GRUB_SERIAL_COMMAND', 'GRUB_TERMINAL_OUTPUT')
+        term_out = unquote(v2) if v2 else ''
+        bad = p2 and 'serial' in term_out and not v1
+        hey_if(bad, p2, 2, f'"serial" requires {sh(p1)} to be set')
 
-        # --- Common Mistake Check 2: GRUB_BACKGROUND path doesn't exist ---
-        for p1 in ['GRUB_BACKGROUND', 'GRUB_THEME']:
-            val = vals.get(p1, '')
-            if val:  # Only check if not empty
-                exists, _ =  self.get_full_path_and_check_existence(val)
-                if not exists:
-                    hey(p1, 2, 'path does not seem to exist')
+        # SAVEDEFAULT=true but DEFAULT is numeric (menu can reorder)
+        p1, v1, p2, v2 = getvals('GRUB_SAVEDEFAULT', 'GRUB_DEFAULT')
+        default_value = v2 if v2 else '0'
+        bad = p1 and v1 in quotes('true') and unquote(default_value).isdigit()
+        hey_if(bad, p2, 1, f'avoid numeric when {sh(p1)}="true"')
 
+        # GRUB_CMDLINE_LINUX has spaces but not quoted
+        p1, v1 = getvals('GRUB_CMDLINE_LINUX')
+        bad = p1 and v1 is not None and ' ' in v1 and v1 not in quotes(unquote(v1))
+        hey_if(bad, p1, 2, 'has spaces and thus must be quoted')
 
-        # --- Common Mistake Check 4: GFXMODE set but not a known safe value ---
-        p1 = 'GRUB_GFXMODE'
-        # Define the set of known safe/default values
-        # TODO: get from the config
-        safe_modes = {
-            '640x480',
-            '800x600',
-            '1024x768',
-            'auto',
-            'keep'  # 'keep' means keep the resolution set by the BIOS/firmware
-        }
+        # GRUB_CMDLINE_LINUX_DEFAULT has spaces but not quoted
+        p1, v1 = getvals('GRUB_CMDLINE_LINUX_DEFAULT')
+        bad = p1 and v1 is not None and ' ' in v1 and v1 not in quotes(unquote(v1))
+        hey_if(bad, p1, 2, 'has spaces and thus must be quoted')
 
-        value = vals.get(p1)
+        # GRUB_BACKGROUND path doesn't exist
+        p1, v1 = getvals('GRUB_BACKGROUND')
+        exists, _ = self.get_full_path_and_check_existence(v1) if v1 else (True, '')
+        bad = p1 and v1 and not exists
+        hey_if(bad, p1, 2, 'path does not seem to exist')
 
-        if value:
-            # 1. Strip quotes and normalize the value
-            # Since GFXMODE can take multiple comma-separated values (e.g., "1024x768,auto"),
-            # we need to check each one.
-            modes = [m.strip().lower() for m in unquote(value).split(',')]
+        # GRUB_THEME path doesn't exist
+        p1, v1 = getvals('GRUB_THEME')
+        exists, _ = self.get_full_path_and_check_existence(v1) if v1 else (True, '')
+        bad = p1 and v1 and not exists
+        hey_if(bad, p1, 2, 'path does not seem to exist')
 
-            unsafe_modes = [m for m in modes if m not in safe_modes]
+        # GFXMODE set but not a known safe value
+        p1, v1 = getvals('GRUB_GFXMODE')
+        safe_modes = {'640x480', '800x600', '1024x768', 'auto', 'keep'}
+        modes = [m.strip().lower() for m in unquote(v1).split(',')] if v1 else []
+        unsafe_modes = [m for m in modes if m not in safe_modes]
+        bad = p1 and v1 and len(unsafe_modes) > 0
+        hey_if(bad, p1, 1, 'perhaps unsupported; stick to common values')
 
-            if unsafe_modes:
-                hey(p1, 1, 'perhaps unsupported; stick to common values')
+        # GRUB_DISTRIBUTOR missing or empty (not a shell command)
+        p1, v1 = getvals('GRUB_DISTRIBUTOR')
+        val = v1 if v1 else ''
+        is_shell_cmd = val.startswith('$(') or val.startswith('`')
+        bad = p1 and ((val and not is_shell_cmd and not val.strip()) or not val)
+        hey_if(bad, p1, 2, 'should be distro name (it is missing/empty)')
 
-        # --- Common Mistake Check 5: Missing GRUB_DISTRIBUTOR ---
-        p1 = 'GRUB_DISTRIBUTOR'
-        val = vals.get(p1, '')
-        # Allow shell commands like $(lsb_release...) or `command`
-        if val and not val.startswith('$(') and not val.startswith('`'):
-            if not val.strip():
-                hey(p1, 2, 'should be distro name (it is missing/empty)')
-        elif not val:
-            hey(p1, 2, 'should be distro name (it is missing/empty)')
+        # OS-PROBER disabled on dual-boot system
+        p1, v1 = getvals('GRUB_DISABLE_OS_PROBER')
+        bad = p1 and v1 in quotes('true') and layout.has_another_os
+        hey_if(bad, p1, 2, 'suggest setting "false" since multi-boot detected')
 
+        # OS-PROBER enabled but no multi-boot detected
+        p1, v1 = getvals('GRUB_DISABLE_OS_PROBER')
+        bad = p1 and v1 not in quotes('true') and not layout.has_another_os
+        hey_if(bad, p1, 1, 'perhaps set "true" since no multi-boot detected?')
 
-        # --- Best Practice Check 4: OS-PROBER Disabled on Dual-Boot System ---
-        p1 = 'GRUB_DISABLE_OS_PROBER'
-        is_prober_disabled = vals.get(p1) in quotes('true')
-        has_other_os = layout.has_another_os
-
-        if is_prober_disabled and has_other_os:
-            hey(p1, 2, 'suggest setting "false" since multi-boot detected')
-
-        if not is_prober_disabled and not has_other_os:
-            hey(p1, 1, 'perhaps set "true" since no multi-boot detected?')
-
-        # for parameters with fixed list of possible values, ensure one of them
+        # Check parameters with fixed list of possible values (enums)
         for param_name, cfg in self.param_cfg.items():
             enums = cfg.get('enums', None)
             regex = cfg.get('edit_re', None)
-
-            # Only validate enums if no regex/range regex defined
             has_enums = isinstance(enums, dict) and len(enums) > 0
             has_no_regex = not regex or (isinstance(regex, (list, dict)) and len(regex) == 0)
 
-            if has_enums and has_no_regex and param_name in vals:
-                value = str(unquote(vals[param_name]))
+            p1, v1 = getvals(param_name)
+            if p1 and has_enums and has_no_regex:
+                value = str(unquote(v1))
                 found = any(value == unquote(str(k)) for k in enums.keys())
+                bad = not found
+                hey_if(bad, p1, 3, 'value not in list of allowed values')
 
-                if not found:
-                    hey(param_name, 3, 'value not in list of allowed values')
+        # GRUB_TIMEOUT over recommended limit
+        p1, v1 = getvals('GRUB_TIMEOUT')
+        val = str(unquote(v1)) if v1 else ''
+        bad = p1 and val and val.isdigit() and int(val) > 60
+        hey_if(bad, p1, 1, 'over 60s seems ill advised')
 
-        timeout_limits = {
-            'GRUB_TIMEOUT': 60,
-            'GRUB_RECORDFAIL_TIMEOUT': 120,
-        }
-        for param_name, limit in timeout_limits.items():
-            val = str(unquote(vals.get(param_name)))
-            if val and val.isdigit() and int(val) > limit:
-                hey(param_name, 1, f'over {limit}s seems ill advised')  # Low severity - just a suggestion
+        # GRUB_RECORDFAIL_TIMEOUT over recommended limit
+        p1, v1 = getvals('GRUB_RECORDFAIL_TIMEOUT')
+        val = str(unquote(v1)) if v1 else ''
+        bad = p1 and val and val.isdigit() and int(val) > 120
+        hey_if(bad, p1, 1, 'over 120s seems ill advised')
 
         return warns
 
