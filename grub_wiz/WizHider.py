@@ -19,7 +19,8 @@ class WizHider:
     and hidden/suppressed warnings.
     """
 
-    def __init__(self, user_config=None, filename: str = 'hidden-items.yaml'):
+    def __init__(self, param_cfg,
+                 user_config=None, filename: str = 'hidden-items.yaml'):
         """
         Initializes the class, creates the config directory if necessary,
         and performs the initial read/refresh.
@@ -31,6 +32,7 @@ class WizHider:
         self.user_config = user_config if user_config else get_user_config_dir("grub-wiz")
         self.config_dir: Path = self.user_config.config_dir
         self.yaml_path: Path = self.config_dir / filename
+        self.param_cfg = param_cfg # has out-of-box state
 
         self.params: Set[str] = set()  # hidden params (excluded from everything)
         self.warns: Set[str] = set()   # Suppressed warnings (e.g., 'GRUB_DEFAULT.3')
@@ -41,15 +43,28 @@ class WizHider:
         # Note: config_dir is already created by UserConfigDir
         self.refresh()
 
+    def init_hides(self):
+        """ From the (simplified) configuration, create
+        the list of out-of-the-box hidden parameter."""
+        for param_name, cfg in self.param_cfg.items():
+            hide = cfg.get('hide', False)
+            if hide:
+                self.hide_param(param_name)
+        self.write_if_dirty()
+        return True
+
     def refresh(self):
-        """Reads the hidden items from the YAML file, clearing the current state on failure."""
+        """
+            Reads the hidden items from the YAML file,
+            clearing the current state on failure.
+        """
         self.params.clear()
         self.warns.clear()
         self.last_read_time = None
         self.dirty_count = 0 # Assume file state is clean
 
         if not self.yaml_path.exists():
-            return
+            return self.init_hides()
 
         try:
             with self.yaml_path.open('r') as f:
@@ -61,10 +76,12 @@ class WizHider:
 
             # Record file modification time
             self.last_read_time = self.yaml_path.stat().st_mtime
+            return True
 
         except (IOError, YAMLError) as e:
             # Any failure leads to empty sets, allowing the application to continue.
             print(f"Warning: Failed to read hidden-items.yaml: {e}")
+            return self.init_hides()
 
     def write_if_dirty(self) -> bool:
         """Writes the current hidden state to disk if the dirty count is > 0."""

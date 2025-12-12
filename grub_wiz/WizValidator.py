@@ -101,13 +101,31 @@ class WizValidator:
                     check=False
                 )
                 if efi_process.returncode == 0:
-                    # Count active boot entries (lines starting with "Boot" and containing "*")
-                    boot_entries = [
-                        line for line in efi_process.stdout.split('\n')
-                        if line.startswith('Boot') and '*' in line
-                    ]
-                    # If 2+ active boot entries, likely multi-boot setup
-                    if len(boot_entries) >= 2:
+                    # Use positive filtering: look for valid device patterns
+                    # Real OS entries have: HD(...)/File(\EFI\{OS}\...)
+                    # Generic entries have: /File(\EFI\BOOT\...) or no device info
+                    #
+                    # Examples:
+                    #   Boot0001* ubuntu   HD(1,GPT,...)/File(\EFI\UBUNTU\SHIMX64.EFI)  <- Real OS
+                    #   Boot0002* UEFI OS  HD(4,GPT,...)/File(\EFI\BOOT\BOOTX64.EFI)    <- Generic fallback
+                    #   Boot0003* UEFI:CD/DVD Drive                                      <- No device info
+
+                    os_boot_entries = []
+                    for line in efi_process.stdout.split('\n'):
+                        if line.startswith('Boot') and '*' in line:
+                            # Must have device info (HD(...))
+                            has_device = 'HD(' in line
+
+                            # Must NOT be the generic BOOT fallback directory
+                            # Check both Windows-style and Unix-style path separators
+                            is_generic_boot = r'\EFI\BOOT\BOOT' in line.upper() or '/EFI/BOOT/BOOT' in line.upper()
+
+                            # Valid OS entry: has device info AND not generic fallback
+                            if has_device and not is_generic_boot:
+                                os_boot_entries.append(line)
+
+                    # If 2+ OS-specific boot entries, likely multi-boot setup
+                    if len(os_boot_entries) >= 2:
                         result.has_another_os = True
             except (FileNotFoundError, PermissionError):
                 # efibootmgr not installed or insufficient permissions
@@ -267,19 +285,22 @@ class WizValidator:
         val_in = unquote(vals.get(p1, 'console'))
         val_out = unquote(vals.get(p2, ''))
         if val_out and val_in != val_out:
-            if 'serial' in val_in or 'serial' in val_out:
-                hey(p1, 2, f'"{val_in}" but {sh(p2)}="{val_out}" (should match)')
+            if 'serial' in val_out:
+                hey(p1, 2, f'should match {sh(p2)} when it is "serial"')
+            if 'serial' in val_in:
+                hey(p2, 2, f'should match {sh(p1)} when it is "serial"')
 
         # --- Best Practice Check 7: Serial config consistency ---
         p1, p2, p3 = 'GRUB_SERIAL_COMMAND', 'GRUB_TERMINAL_INPUT', 'GRUB_TERMINAL_OUTPUT'
         serial_cmd = vals.get(p1, '')
         term_in = unquote(vals.get(p2, 'console'))
         term_out = unquote(vals.get(p3, ''))
-        has_serial_term = 'serial' in term_in or 'serial' in term_out
-        if serial_cmd and not has_serial_term:
-            hey(p1, 2, 'set but no serial terminal configured')
-        if has_serial_term and not serial_cmd:
-            hey(p2 if 'serial' in term_in else p3, 2, 'serial terminal needs SERIAL_COMMAND set')
+        if serial_cmd and 'serial' not in term_out and 'serial' not in term_in:
+            hey(p1, 2, f'set but neither {sh(p2)} or {sh(p3)} are "serial"')
+        if 'serial' in term_in:
+            hey(p2, 2, f'"serial" requires {sh(p1)} to be set')
+        if 'serial' in term_out:
+            hey(p3, 2, f'"serial" requires {sh(p1)} to be set')
 
         # --- Advanced Check 1: SAVEDEFAULT=true but DEFAULT is numeric ---
         # The GRUB documentation discourages this because a numeric default can change

@@ -247,3 +247,49 @@ This feature will make your app much more professional and adaptable to various 
 * Deprecated:
   * GRUB_HIDDEN_TIMEOUT_QUIET
   * GRUB_RECORDFAIL (Ubuntu-only, auto-managed)
+
+#### Sparse Override Feature (Under consideration)
+* Effort: Medium-high
+* Value: High - best UX This is the most powerful and user-friendly:
+
+###### ~/.config/grub-wiz/custom_config.yaml
+```
+schema_version: "1.0"  # Must match canned_config
+
+# Permanently exclude parameters (stricter than WizHider)
+killed_params:
+  - GRUB_BADRAM        # Never show, even in "show all"
+  - GRUB_INIT_TUNE     # Don't care about beeps
+
+# Override specific parameter configs
+overrides:
+  GRUB_TIMEOUT:
+    # Only override what you want - rest inherited from canned
+    enums:
+      0: no wait
+      3: short (my preference)
+      10: normal (my preference)
+      30: long (my preference)
+  
+  GRUB_GFXMODE:
+    hide: False  # Make visible by default (was True in canned)
+    
+  GRUB_CMDLINE_LINUX:
+    guidance: "Custom help text for my specific use case..."
+
+# Add custom parameters
+user_params:
+  GRUB_MY_CUSTOM_FLAG:
+    default: '""'
+    edit_re: ^".*"$
+    guidance: "My organization's custom kernel parameter"
+    hide: False
+```
+
+###### Implementation notes:
+* Schema version check - ignore custom_config if version mismatches (safe)
+* killed_params vs WizHider - different purposes:
+* WizHider: Runtime user preferences (hide/unhide in UI)
+* killed_params: Admin decision "never expose this parameter"
+* Merge strategy: canned → apply overrides → add user_params
+* Updates safe: Changes to canned_config automatically flow through (unless overridden)

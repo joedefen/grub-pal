@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """
 TODO:
- - handle wrapping values that are long
- - when starting the home screen, it takes 3 seconds to jump to valid line
- - writing YAML into .config directory and read it first (allow user extension)
+ - implement hidden on review screen
+ - refactor if expr: hey(args) to
+      bad = expr; hey_if(bad, args)
+      so all keys can be collected for retiring ones
+ - implement reset config data
+ - replace [x] with underscored x in header
+ - handle wrapping param / warns that are long
+ - implement warn purging .. change sig to param + text
+ - (maybe) writing YAML into .config directory and read it first (allow user extension)
 """
 # pylint: disable=invalid_name,broad-exception-caught
 
@@ -139,7 +145,7 @@ class GrubWiz:
         self.param_name_wid = 0
         self.menu_entries = None
         self.backup_mgr = BackupMgr()
-        self.hider = WizHider()
+        self.hider = None
         self.grub_writer = GrubWriter()
         self.param_discovery = ParamDiscovery()
         self.wiz_validator = None
@@ -205,6 +211,7 @@ class GrubWiz:
             self.param_cfg['GRUB_DEFAULT']['enums'].update(self.menu_entries)
         except Exception:
             pass
+        self.hider = WizHider(param_cfg=self.param_cfg)
     
     def setup_win(self):
         """TBD """
@@ -350,20 +357,26 @@ class GrubWiz:
     def add_home_head(self):
         """ TBD"""
         header = ''
-        _, _, enums, regex = self._get_enums_regex()
+        param_name, _, enums, regex = self._get_enums_regex()
         if enums:
             header += ' [c]ycle'
         if regex:
             header += ' [e]dit'
+        if param_name:
+            header += ' [h]IDE' if self.hider.is_hidden_param(
+                        param_name) else ' [h]ide'
+        header = f'{header:<24}' # make is so it does not jump so much
 
         guide = 'UIDE' if self.spins.guide else 'uide'
-        header += f' [g]{guide} [w]rite [R]estore ?:help ESC:back [q]uit'
+        header += f' [g]{guide} [w]rite [R]estore ?:help [q]uit'
         chg_cnt = len(self.get_diffs())
         if chg_cnt:
             header += f'   #chg={chg_cnt}'
         self.win.add_header(header)
         if self.hidden_stats.param == 0:
             return
+        # if any param is hidden on this screen, then show
+        # a second line
         header = '   [s]HOW hidden:'
         if not self.spins.show_hidden:
             header = header.lower()
