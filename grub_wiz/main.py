@@ -565,12 +565,13 @@ class GrubWiz:
 
         while not valid:
             prompt = f'Edit {name} [{hint}]'
-            value = win.answer(prompt=prompt, seed=str(value), esc_abort=True)
+            value = win.answer(prompt=prompt, seed=str(value), height=2, esc_abort=True)
             if value is None: # aborted
                 return
             valid = True # until proven otherwise
             if regex and not re.match(regex, str(value)):
                 valid, hint = False, f'must match: {pure_regex}'
+                win.flash('Invalid input - please try again', duration=1.5)
 
         self.param_values[name] = value
         

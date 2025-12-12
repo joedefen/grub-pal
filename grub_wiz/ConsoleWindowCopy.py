@@ -838,7 +838,7 @@ class ConsoleWindow:
         # --- 4. Final Update (Only one physical screen update) ---
         curses.doupdate()
 
-    def answer(self, prompt='Type string [then Enter]', seed='', width=80, esc_abort=False):
+    def old_answer(self, prompt='Type string [then Enter]', seed='', width=80, esc_abort=False):
         """
         Presents a modal dialog box for manual text input, handling arbitrarily
         long strings.
@@ -925,6 +925,259 @@ class ConsoleWindow:
             elif 32 <= key <= 126:  # Printable ASCII characters
                 input_string.insert(cursor_pos, chr(key))
                 cursor_pos += 1
+
+
+    def answer (self, prompt='Type string [then Enter]', seed='', width=80, height=5, esc_abort=False):
+        """
+        Presents a modal dialog box with working horizontal scroll indicators.
+        """
+        def draw_rectangle(scr, r1, c1, r2, c2):
+            """Draws a box using standard curses characters."""
+            scr.border(0)
+            for r in range(r1, r2 + 1):
+                if r == r1 or r == r2:
+                    # Draw horizontal lines
+                    for c in range(c1 + 1, c2):
+                        scr.addch(r, c, curses.ACS_HLINE)
+                if r > r1 and r < r2:
+                    # Draw vertical lines
+                    scr.addch(r, c1, curses.ACS_VLINE)
+                    scr.addch(r, c2, curses.ACS_VLINE)
+            # Draw corners
+            scr.addch(r1, c1, curses.ACS_ULCORNER)
+            scr.addch(r1, c2, curses.ACS_URCORNER)
+            scr.addch(r2, c1, curses.ACS_LLCORNER)
+            scr.addch(r2, c2, curses.ACS_LRCORNER)
+
+        input_string = list(seed)
+        cursor_pos = len(input_string)
+        v_scroll_top = 0 
+
+        def calculate_geometry(self):
+            # ... (Geometry calculation logic remains the same) ...
+            self.rows, self.cols = self.scr.getmaxyx()
+            min_height_needed = height + 4
+            if self.rows < min_height_needed or self.cols < 30:
+                return False, None, None, None, None
+
+            max_display_width = self.cols - 6
+            text_win_width = min(width, max_display_width)
+            row0 = self.rows // 2 - (height // 2 + 1)
+            row9 = row0 + height + 1 
+            col0 = (self.cols - (text_win_width + 2)) // 2
+            
+            return True, row0, row9, col0, text_win_width
+
+        success, row0, row9, col0, text_win_width = calculate_geometry(self)
+        if not success:
+            return seed
+
+        while True:
+            try:
+                success, row0, row9, col0, text_win_width = calculate_geometry(self)
+                
+                # --- RESIZE/TOO SMALL CHECK ---
+                if not success:
+                    min_height_needed = height + 4
+                    self.scr.clear()
+                    msg = f"Window too small. Min size required: 30 cols x {min_height_needed} rows."
+                    self.scr.addstr(0, 0, msg, curses.A_REVERSE)
+                    self.scr.addstr(1, 0, "Resize terminal or press ESC to abort.")
+                    self.scr.refresh()
+                    key = self.scr.getch()
+                    if key in [27]: return None
+                    if key == curses.KEY_RESIZE: curses.update_lines_cols()
+                    continue
+
+                self.scr.clear()
+                
+                # Draw the box using the imported rectangle function
+                draw_rectangle(self.scr, row0, col0, row9, col0 + text_win_width + 1)
+                self.scr.addstr(row0, col0 + 1, prompt[:text_win_width])
+
+                # --- Core Display and Scroll Indicator Logic ---
+
+                wrapped_line_idx = cursor_pos // text_win_width
+                cursor_offset_on_wrapped_line = cursor_pos % text_win_width
+
+                # Vertical scroll adjustment
+                if wrapped_line_idx < v_scroll_top:
+                    v_scroll_top = wrapped_line_idx
+                elif wrapped_line_idx >= v_scroll_top + height:
+                    v_scroll_top = wrapped_line_idx - height + 1
+
+                # Horizontal scroll start calculation
+                h_scroll_start = max(0, cursor_offset_on_wrapped_line - text_win_width + 1)
+
+                # Calculate total wrapped lines for overflow detection
+                total_wrapped_lines = (len(input_string) + text_win_width - 1) // text_win_width
+                if len(input_string) == 0:
+                    total_wrapped_lines = 1
+                
+                # Display the visible lines
+                for r in range(height):
+                    current_wrapped_line_idx = v_scroll_top + r
+                    
+                    start_char_idx = current_wrapped_line_idx * text_win_width
+                    end_char_idx = start_char_idx + text_win_width
+                    
+                    if start_char_idx > len(input_string) and r > 0:
+                        break
+
+                    raw_wrapped_line = "".join(input_string[start_char_idx:end_char_idx])
+                    line_to_display = raw_wrapped_line
+                    current_h_scroll_start = 0
+
+                    is_cursor_line = (current_wrapped_line_idx == wrapped_line_idx)
+                    
+                    if is_cursor_line:
+                        line_to_display = raw_wrapped_line[h_scroll_start:]
+                        current_h_scroll_start = h_scroll_start
+                        
+                    # 1. Clear the content area (important for redraw integrity)
+                    self.scr.addstr(row0 + 1 + r, col0 + 1, ' ' * text_win_width)
+                    # 2. Display the text
+                    self.scr.addstr(row0 + 1 + r, col0 + 1, line_to_display[:text_win_width])
+                    
+                    # --- SCROLL INDICATOR LOGIC ---
+                    if is_cursor_line:
+                        left_indicator = curses.ACS_VLINE 
+                        right_indicator = curses.ACS_VLINE
+                        
+                        # Left Indicator Check
+                        if current_h_scroll_start > 0:
+                            # If content is scrolled right, show '<'
+                            left_indicator = ord('<') 
+
+                        # Right Indicator Check
+                        full_line_len = len(raw_wrapped_line)
+                        if full_line_len > current_h_scroll_start + text_win_width:
+                            # If there's more content to the right, show '>'
+                            right_indicator = ord('>') 
+                        
+                        # Draw Indicators (overwrite the border's vertical line)
+                        self.scr.addch(row0 + 1 + r, col0, left_indicator)
+                        self.scr.addch(row0 + 1 + r, col0 + text_win_width + 1, right_indicator)
+
+                        # Highlight the cursor position
+                        display_cursor_pos = cursor_pos - start_char_idx - current_h_scroll_start
+                        char_at_cursor = line_to_display[display_cursor_pos] if display_cursor_pos < len(line_to_display) else " "
+
+                        self.scr.addstr(row0 + 1 + r, col0 + 1 + display_cursor_pos,
+                                        char_at_cursor, curses.A_REVERSE)
+
+                        # Set the actual hardware cursor
+                        self.scr.move(row0 + 1 + r, col0 + 1 + display_cursor_pos)
+
+                # --- CORNER OVERFLOW INDICATORS ---
+                # Upper left (one line down): show if scrolled down or scrolled right
+                has_content_above = v_scroll_top > 0
+                has_content_left = h_scroll_start > 0
+                if has_content_above or has_content_left:
+                    self.scr.addch(row0 + 1, col0, '◀', curses.A_BOLD)
+
+                # Lower right (one line up): show if there's content below or to the right
+                has_content_below = (v_scroll_top + height) < total_wrapped_lines
+                # Check if cursor line has content beyond the visible window
+                cursor_line_start = wrapped_line_idx * text_win_width
+                cursor_line_end = cursor_line_start + text_win_width
+                cursor_line_full_len = min(len(input_string), cursor_line_end) - cursor_line_start
+                has_content_right = cursor_line_full_len > (h_scroll_start + text_win_width)
+                if has_content_below or has_content_right:
+                    self.scr.addch(row9 - 1, col0 + text_win_width + 1, '▶', curses.A_BOLD)
+
+                # Footer and refresh
+                abort = ' or ESC to abort' if esc_abort else ''
+                ending = f'ENTER to submit{abort}'
+                self.scr.addstr(row9, col0 + 1 + text_win_width - len(ending), ending[:text_win_width])
+                self.scr.refresh()
+                curses.curs_set(0)  # Hide hardware cursor; reverse video shows position
+
+                key = self.scr.getch()
+
+                # --- Key Handling Logic (omitted for brevity, remains the same) ---
+                if key in [10, 13]:
+                    curses.curs_set(0)
+                    return "".join(input_string)
+                if key in [27] and esc_abort:
+                    return None
+                
+                elif key == curses.KEY_UP:
+                    target_pos = cursor_pos - text_win_width
+                    cursor_pos = max(0, target_pos)
+
+                elif key == curses.KEY_DOWN:
+                    target_pos = cursor_pos + text_win_width
+                    cursor_pos = min(len(input_string), target_pos)
+                        
+                # ... [KEY_LEFT, KEY_RIGHT, HOME, END, edits, ASCII] ...
+                elif key == curses.KEY_LEFT: cursor_pos = max(0, cursor_pos - 1)
+                elif key == curses.KEY_RIGHT: cursor_pos = min(len(input_string), cursor_pos + 1)
+                elif key == curses.KEY_HOME: cursor_pos = 0
+                elif key == curses.KEY_END: cursor_pos = len(input_string)
+                elif key in [curses.KEY_BACKSPACE, 127, 8]:
+                    if cursor_pos > 0:
+                        input_string.pop(cursor_pos - 1)
+                        cursor_pos -= 1
+                elif key == curses.KEY_DC:
+                    if cursor_pos < len(input_string):
+                        input_string.pop(cursor_pos)
+                elif 32 <= key <= 126:
+                    input_string.insert(cursor_pos, chr(key))
+                    cursor_pos += 1
+                
+                # --- Explicit Resize Handler ---
+                elif key == curses.KEY_RESIZE:
+                    curses.update_lines_cols()
+                    continue
+                    
+            except curses.error:
+                # Catch exceptions from drawing outside bounds during resize
+                self.scr.clear()
+                curses.update_lines_cols()
+                self.rows, self.cols = self.scr.getmaxyx()
+                # Drain any pending resize events to prevent infinite loop
+                self.scr.nodelay(True)  # Make getch() non-blocking
+                while True:
+                    key = self.scr.getch()
+                    if key == -1:  # No more keys in queue
+                        break
+                self.scr.nodelay(False)  # Restore blocking mode
+                continue
+
+
+    def flash(self, message='', duration=2.0):
+        """
+        Displays a brief flash message in the center of the screen.
+        Auto-dismisses after duration seconds without requiring user input.
+
+        :param message: The message to display
+        :param duration: How long to show the message in seconds (default 0.5)
+        """
+
+        if self.rows < 3 or self.cols < len(message) + 4:
+            return
+
+        # Calculate centered position
+        msg_len = min(len(message), self.cols - 4)
+        row = self.rows // 2
+        col = (self.cols - msg_len - 2) // 2
+
+        # Draw a simple box with the message
+        self.scr.clear()
+        try:
+            # Top border
+            self.scr.addstr(row - 1, col, '┌' + '─' * msg_len + '┐', curses.A_BOLD | curses.A_REVERSE)
+            # Message
+            self.scr.addstr(row, col, '│' + message[:msg_len] + '│', curses.A_BOLD | curses.A_REVERSE)
+            # Bottom border
+            self.scr.addstr(row + 1, col, '└' + '─' * msg_len + '┘', curses.A_BOLD | curses.A_REVERSE)
+        except curses.error:
+            pass  # Ignore if terminal too small
+
+        self.scr.refresh()
+        time.sleep(duration)
+
 
     def alert(self, title='ALERT', message='', height=1, width=80):
         """
