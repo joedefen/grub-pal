@@ -220,17 +220,17 @@ class GrubWiz:
                         category='action', keys=[ord('c'), cs.KEY_RIGHT, ord(' ')])
         spinner.add_key('cycle_prev', '<=,BS - prev cycle value',
                         category='action', keys=[ord('C'), cs.KEY_LEFT, cs.KEY_BACKSPACE])
-        spinner.add_key('edit', 'e,ENTER - edit value', category='action',
-                            keys=[ord('e'), 10, 13])
+        spinner.add_key('edit', 'e - edit value', category='action')
         spinner.add_key('expert_edit', 'E - expert edit (minimal validation)', category='action',
                             keys=[ord('E')])
-        spinner.add_key('guide', 'g - guidance toggle', vals=[False, True])
-        spinner.add_key('hide', 'h - toggle hidden param or warning', category='action')
-        spinner.add_key('show_hidden', 's - show hidden params/warnings', category='action')
+        spinner.add_key('guide', 'g - guidance level', vals=['Off', 'Enums', "Full"])
+        spinner.add_key('hide', 'x - mark/unmark X-params/warnings', category='action')
+        spinner.add_key('show_hidden', 's - show/hide the X-params/warnings', category='action')
         spinner.add_key('enter_restore', 'R - enter restore screen', category='action')
         spinner.add_key('restore', 'r - restore selected backup [in restore screen]', category='action')
         spinner.add_key('delete', 'd - delete selected backup [in restore screen]', category='action')
-        spinner.add_key('write', 'w - write out current contents and run "grub-update"', category='action')
+        spinner.add_key('write', 'w,ENTER - write params and run "grub-update"',
+                        category='action', keys=[ord('w'), 10, 13])
         spinner.add_key('escape', 'ESC - back to prev screen',
                         category="action", keys=[27,])
         spinner.add_key('quit', 'q,ctl-c - quit the app', category='action', keys={0x3, ord('q')})
@@ -285,12 +285,29 @@ class GrubWiz:
             return
         # if any param is hidden on this screen, then show
         # a second line
-        header = '   [s]HOW:'
+        header = '   [s]hide:'
         if not self.show_hidden_warns:
-            header = header.lower()
+            header = '[s]how:'
         if self.hidden_stats.warn:
             header += f' {self.hidden_stats.warn} hidden warnings'
         self.win.add_header(header)
+        
+        
+    def add_wrapped_body_line(self, line, indent):
+        """ TBD """
+        win = self.win
+        wid = self.win.cols
+        wrapped = textwrap.fill(line, width=wid,
+                    subsequent_indent=' '*indent)
+        wrapped += '\n'
+        count = 0
+        wraps = wrapped.split('\n')
+        for wrap in wraps:
+            if wrap:
+                win.add_body(wrap)
+                count += 1
+        return count - 1 # extra lines
+
 
     def add_review_body(self):
         """ TBD """
@@ -342,14 +359,19 @@ class GrubWiz:
 
         for param_name, ns in reviews.items():
             pos = len(self.clues)
-            param_line, keys = self.body_param_line(param_name, pos, picked)
+            param_line, keys, indent = self.body_param_line(param_name, pos, picked)
             changed = bool(ns.old_value is not None and str(ns.value) != str(ns.old_value))
-            self.win.add_body(param_line)
+            if pos == picked:
+                extras = self.add_wrapped_body_line(param_line, indent)
+            else:
+                self.win.add_body(param_line)
+
             if changed:
                 keys = ' [u]ndo' + keys
             self.clues.append(Clue('param', param_name, keys=keys))
 
             if changed:
+                pos += 1
                 self.win.add_body(f'  {'was':>{self.param_name_wid+4}}  {ns.old_value}')
                 self.clues.append(Clue('nop'))
             for hey in ns.heys:
@@ -358,10 +380,15 @@ class GrubWiz:
                 self.hidden_stats.warn += int(is_hidden)
 
                 if not is_hidden or self.show_hidden_warns:
-                    mark = '-' if is_hidden else ' '
-                    self.win.add_body(f'{mark} {hey[0]:>{self.param_name_wid+4}}  {hey[1]}')
+                    mark = '✘' if is_hidden else ' '
+                    line = f'{mark} {hey[0]:>{self.param_name_wid+4}}  {hey[1]}'
+                    pos += 1
+                    if pos == picked:
+                        self.add_wrapped_body_line(line, indent)
+                    else:
+                        self.win.add_body(line)
                     self.clues.append(Clue('issue', warn_key,
-                               keys=' [h]IDE' if is_hidden else' [h]ide'))
+                               keys=' [x]unhide' if is_hidden else' [x]hide'))
 
     def get_diffs(self):
         """ get the key/value pairs with differences"""
@@ -374,33 +401,34 @@ class GrubWiz:
 
     def add_home_head(self):
         """ TBD"""
-        header = ''
-        param_name, _, enums, regex = self._get_enums_regex()
-        if enums:
-            header += ' [c]ycle'
-        if regex:
-            header += ' [e]dit'
-        if param_name:
-            header += ' [h]IDE' if self.hider.is_hidden_param(
-                        param_name) else ' [h]ide'
+        header = 'EDIT SCREEN ::'
+        level = self.spins.guide
+        header += f' [g]uide={level} [w]rite [R]estore ?:help [q]uit'
+        self.win.add_header(header)
+
         header = f'{header:<24}' # make is so it does not jump so much
 
-        guide = 'UIDE' if self.spins.guide else 'uide'
-        header += f' [g]{guide} [w]rite [R]estore ?:help [q]uit'
-        chg_cnt = len(self.get_diffs())
-        if chg_cnt:
-            header += f'   #chg={chg_cnt}'
-        self.win.add_header(header)
         self.hider.write_if_dirty()
         if self.hidden_stats.param == 0:
             return
         # if any param is hidden on this screen, then show
         # a second line
-        header = '   [s]HOW:'
-        if not self.show_hidden_params:
-            header = header.lower()
+        header = 's:hide' if self.show_hidden_params else '[s]how'
         if self.hidden_stats.param:
-            header += f' {self.hidden_stats.param} hidden params'
+            header += f' {self.hidden_stats.param} ✘-params'
+        header = f'{header:<24}'
+
+        param_name, _, enums, regex = self._get_enums_regex()
+        if enums:
+            header += ' 🡄 🡆'
+        if regex:
+            header += ' [e]dit'
+        if param_name:
+            header += ' x:unmark' if self.hider.is_hidden_param(
+                        param_name) else ' x:mark'
+        header += f'   𝚫={len(self.get_diffs())}'
+
+
         self.win.add_header(header)
 
     def adjust_picked_pos(self):
@@ -474,14 +502,14 @@ class GrubWiz:
         self.prev_pos = pos
         return pos
 
-    def body_param_line(self, param_name, pos, picked, guided=False):
+    def body_param_line(self, param_name, pos, picked, guided='Off'):
         """ Build a body line for a param """
         cfg = self.param_cfg[param_name]
         enums = cfg.get('enums', [])
         regex = cfg.get('regex', None)
         marker = ' '
         if self.ss.is_curr(HOME_ST) and self.hider.is_hidden_param(param_name):
-            marker = '-'
+            marker = '✘'
         keys = ''
         if enums:
             keys += ' [c]ycle'
@@ -489,24 +517,30 @@ class GrubWiz:
             keys += ' [e]dit'
         value = self.param_values[param_name]
         dots = '.' * (self.param_name_wid-len(param_name[5:])+3)
-        param_line = f'{marker} {param_name[5:]} {dots}  {value}'
-        if pos != picked:
-            return param_line, keys
-        if not guided:
-            more = ''
-            if enums:
-                more += '   CYCLE:' # going to add enums
-                for choice in enums.keys():
-                    if str(value) == str(choice):
-                        more += ' ><'
-                    elif len(str(choice)) > 0:
-                        more += f' {choice}'
-                    else:
-                        more += " ''"
-            if regex and enums:
-                more += ' or EDIT'
-            param_line += more
-        return param_line, keys
+        param_line = f'{marker} {param_name[5:]} {dots}  '
+        indent = len(param_line)
+        param_line += str(value)
+#       RETIRED SUPPORT FOR INLINE ENUMS
+#       if pos != picked:
+#           return param_line, keys, indent
+#       if guided != 'Off':
+#           more = ''
+#           if enums:
+#               sp = ''
+#               more += '   ◀' # going to add enums
+#               # more += '   CYCLE:' # going to add enums
+#               for choice in enums.keys():
+#                   if str(value) == str(choice):
+#                       more += f' ⏺'
+#                   elif len(str(choice)) > 0:
+#                       more += f' {choice}'
+#                   else:
+#                       more += f" ''"
+#               more += ' ▶'
+#           if regex and enums:
+#               more += ' or EDIT'
+#           param_line += more
+        return param_line, keys, indent
 
     def add_home_body(self):
         """ TBD """
@@ -531,35 +565,19 @@ class GrubWiz:
                 continue
 
             param_name = ns.param_name
-            param_line, _ = self.body_param_line(
+            param_line, _, indent = self.body_param_line(
                             param_name, pos, picked, self.spins.guide)
             if pos == picked:
                 found_current = True
-            if not self.spins.guide or pos != picked:
+            if pos != picked:
                 win.add_body(param_line)
                 continue
             cfg = self.param_cfg[param_name]
             value = self.param_values[param_name]
             emits.append(param_line)
-            text = self.param_cfg[param_name]['guidance']
-            lines = text.split('\n')
-            lead = '    '
-            wid = win.cols - len(lead)
-            for line in lines:
-                wrapped = ''
-                if line.strip() == '%ENUMS%':
-                    wrapped += ': Cycle values with [c]:\n'
-                    for enum, descr in cfg['enums'].items():
-                        star = ' [*] ' if str(enum) == str(value) else ' [ ] '
-                        line = f' {star}{enum}: {descr}\n'
-                        wrapped += textwrap.fill(line, width=wid, subsequent_indent=' '*5)
-                        wrapped += '\n'
-                else:
-                    wrapped += textwrap.fill(line, width=wid, subsequent_indent=' '*5)
-                wraps = wrapped.split('\n')
-                for wrap in wraps:
-                    if wrap:
-                        emits.append(f'{lead}{wrap}')
+            
+            emits += self.drop_down_lines(param_name)
+
             # truncate the lines to show to all that fit..
             if len(emits) > view_size:
                 hide_cnt = 1 + len(emits) - view_size
@@ -572,6 +590,49 @@ class GrubWiz:
         if over > 0:
             win.scroll_pos += over # scroll back by number of out-of-view lines
         return found_current
+    
+    def drop_down_lines(self, param_name):
+        """ TBD """
+        def gen_enum_lines():
+            nonlocal cfg, wid
+            enums = cfg['enums']
+            if not enums:
+                return []
+            value = self.param_values[param_name]
+            edit = ' or [e]dit' if cfg['edit_re'] else ''
+            wrapped = f': 🡄 🡆 {edit}:\n'
+            for enum, descr in cfg['enums'].items():
+                star = ' ⯀ ' if str(enum) == str(value) else ' 🞏 '
+                line = f' {star}{enum}: {descr}\n'
+                wrapped += textwrap.fill(line, width=wid, subsequent_indent=' '*5)
+                wrapped += '\n'
+            return wrapped.split('\n')
+        
+        if self.spins.guide == 'Off':
+            return []
+
+
+        cfg = self.param_cfg.get(param_name, None)
+        if not cfg:
+            return ''
+        emits, wraps = [], [] # lines to emit
+        lead = '    '
+        wid = self.win.cols - len(lead)
+        
+        if self.spins.guide == 'Full':
+            text = cfg['guidance']
+            lines = text.split('\n')
+            for line in lines:
+                wrapped = ''
+                if line.strip() == '%ENUMS%':
+                    wraps += gen_enum_lines()
+                else:
+                    wrapped = textwrap.fill(line, width=wid, subsequent_indent=' '*5)
+                    wraps += wrapped.split('\n')
+        elif self.spins.guide == 'Enums':
+            wraps += gen_enum_lines()
+        emits = [f'{lead}{wrap}' for wrap in wraps if wrap]
+        return emits
 
     def edit_param(self, win, name, regex):
         """ Prompt user for answer until gets it right"""

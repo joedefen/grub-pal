@@ -27,7 +27,7 @@ Boot Timeout:
     default: menu
     edit_re:
     enums:
-      menu: Show the full menu during the timeout period.
+      menu:  Show the full menu during the timeout period.
       countdown: Show a countdown display instead of the menu.
       hidden: Hide Menu until any key is pressed (also set HIDDEN_TIMEOUT)
     guidance: "What to show during TIMEOUT period. Choices:
