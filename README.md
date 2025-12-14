@@ -35,47 +35,95 @@ GrubWiz makes complex, manual configuration steps as easy as a few keystrokes in
 * `grub-wiz` is available on PyPI and installed via: `pipx install grub-wiz`
 * Typically, just run `grub-wiz` w/o arguments
 * **Note**: `grub-wiz` makes itself root using `sudo` and will prompt for password if needed.
-
+---
 #### How to Use grub-wiz
-Running `grub-wiz` brings up a screen like:
+##### EDIT SCREEN
+Running `grub-wiz` brings a screen similar to:
 ```
-  [n]ext [g]UIDE [q]uit
-──────────────────────────────────────────────────────────────────
- [Timeout & Menu]
-   TIMEOUT .................  2
->  TIMEOUT_STYLE ...........  hidden                              
-     What to show during TIMEOUT period. Choices:
-      - menu: Show the full menu during the timeout period.
-      - countdown: Show a countdown display instead of the menu.
-      * hidden: Menu is hidden until a key is pressed.
-   DEFAULT .................  0
-   RECORDFAIL_TIMEOUT ......  30
+ EDIT  [g]uide=Off [w]rite [R]estore ?:help [q]uit  𝚫=0
+ [s]how 18 ✘-params          ⮜–⮞ [e]dit x:mark
+──────────────────────────────────────────────────────────────────────
+ [Boot Timeout]
+>  TIMEOUT·················  2                                        
+
+ [Menu Entries]
+   DEFAULT·················  0
+   SAVEDEFAULT·············  false
+   DISABLE_OS_PROBER·······  false
+   DISABLE_RECOVERY········  false
 
  [Kernel Arguments]
-   CMDLINE_LINUX ...........  ""
-   CMDLINE_LINUX_DEFAULT ...  ""
-   DISABLE_LINUX_UUID ......  false
-   DISABLE_OS_PROBER .......  false
+   CMDLINE_LINUX···········  ""
+   CMDLINE_LINUX_DEFAULT···  "quiet splash"
 
- [Appearance]
-   BACKGROUND ..............
-   DISTRIBUTOR .............  'Kubuntu'
-   GFXMODE .................  640x480
-   THEME ...................
+ [Visual Appearance]
+   BACKGROUND··············
+   THEME···················
 
  [Security & Advanced]
-   ENABLE_CRYPTODISK .......  false
-   TERMINAL_INPUT ..........  console
 ```
-#### Backup and Restore
+NOTES:
+* `grub-wiz` supports more parameters than shown; you can see them all with the `s` key. The parameters that are suppressed will be marked with an `✘` (wand called x-params).
+* In the header, `⮜–⮞` indicates you can cycle through a list of values with the right/left arrow keys.
+* Also, `[e]dit` indicates you can typ `e` to free-style edit the parameter; in that case, your change will be check with a regular expression and you must make it match.
+* When you have finished your changes, then type `w` to write the parameter after you **review** them.
+* For editing the `CMDLINE` see "Essential Linux Kernel Parameters (GRUB Arguments)" in the Appendix.
+
+##### REVIEW SCREEN
+The next step in update the `grub` configuration is the REVIEW screen:
+```
+ REVIEW  [g]uide=Off [w]rite [R]estore ESC:back ?:help [q]uit  𝚫=1
+                             ⮜–⮞ [e]dit
+──────────────────────────────────────────────────────────────────────
+>  TIMEOUT·················  22003                                    
+                        was  2
+                          *  over 60s seems ill advised
+   DISABLE_OS_PROBER·······  false
+                          *  perhaps set "true" since no multi-boot d▶
+```
+NOTES:
+* The review screen shows parameters that you have changed and parameters that have warnings.
+* On this screen, you may edit parameter values just as on the EDIT screen if the parameter is shown.
+* Warnings are be dismissed by fixing the values or by suppressing the warning (with the `x` key).
+* If you mark/suppress warnings (or parameters), they remain suppressed in future sessions until unmarked.
+* Lines on this screen and others that end with `▶` are truncated. To see the rest of the text, visit that line.
+* When done with your review, type `w` again to finally write the `grub` file; if successful, you will be given the choice to reboot or shutdown or return to `grub-wiz`.
+
+##### GUIDANCE LEVELS
+Typing `g' on the EDIT and REVIEW screens cycles through its possible values, None, Enums, and Full.  Full guidance for the `TIMEOUT` parameter would look like:
+```
+>  DISABLE_OS_PROBER·······  false                                    
+                          *  perhaps set "true" since no multi-boot d▶
+     Setting to 'true' prevents GRUB from automatically scanning other
+          partitions for installed operating systems (like Windows,
+          other Linux distros) and adding them to the boot menu.
+     : ⮜–⮞ :
+       ⯀ false: Search for and automatically add other operating
+          systems to the menu.
+       🞏 true: Do not search for other operating systems.
+```
+
+
+#### RESTORE SCREEN
+When you enter the restore screen by typing `R` from the EDIT or REVIEW screen, it looks something like:
+```
+ RESTORE [d]elete [t]ag [r]estore [v]iew ESC:back ?:help [q]uit
+──────────────────────────────────────────────────────────────────────
+>● 20251211-211603-13C6E037.with-prober.bak                           
+   20251210-170809-F68D6B8C.custom.bak
+   20251210-003216-BC58FF3D.orig.bak
+```
+NOTES:
+- the leading `●` indicates it is the backup for the current session.
+
 Backup and restore features:
- - backups of `/etc/default/grub` will be put in `~/.config/grub-wiz`
- - backups will be named `YYYYMMDD.HHMMSS.{8-hex-digit-checksum}.{tag}.txt`
- - if there are no backup files, on startup `grub-wiz` will automatically create one with tag='orig'
- - if there are backup files and have the same checksum as the current `/etc/default/grub`, you are prompted to provide a tag for its backup (you can decline if you wish)
- - tags must be word/phase-like strings with only [-_A-Za-z0-9] characters.
- - there is a `[R]estore` menu item that brings up a screen which is a list of backups; you can delete and restore backups
- - if an entry is restored, the program re-initializes using restored grub file and returns to main screen
+ - backups of `/etc/default/grub` are stored in `~/.config/grub-wiz`
+ - backups are named `YYYYMMDD.HHMMSS.{8-hex-digit-checksum}.{tag}.txt`; you supply the tag.
+ - if there are no backup files, on startup `grub-wiz` automatically creates one with tag='orig'
+ - if there are backup files and none match the current `/etc/default/grub`, `grub-wiz` prompts you for a tag for its backup (you may decline).
+ - tags must be word/phase-like strings with only [-_A-Za-z0-9] characters (spaces will be converted to "-" characters)
+ - the `[R]estore` menu item brings up the RESTORE screen which lists backups; you can delete, restore, and view backups
+ - if a backup is restored, `grub-wiz` re-initializes using restored grub file and returns to main screen
  
 #### Parameter Discovery
 Because GRUB can vary per system, `grub-wiz` uses `info -f grub -n "Simple Configuration"` to discover which parameters are actually supported. Parameters not found on your system are automatically removed by `grub-wiz` from its screens. Notes:
@@ -100,37 +148,38 @@ To leverage user-installed, `grub-wiz` even in minimal recovery environment of g
 2. Execute grub-wiz using its full path: `/home/{username}/.local/bin/grub-wiz`
 3. Make changes as needed, and "write" them to update the boot instructions.
 
+---
 
 #### Essential Linux Kernel Parameters (GRUB Arguments)
 
 These are the arguments that get passed directly to the Linux kernel during the boot process.
 Parameter	Purpose & When to Use It	Example Use Case
 
-* quiet
+* **quiet**
   * Boot Output Control: Suppresses most kernel startup messages, making the boot process appear cleaner and faster (often used with splash).
   * Default setting on most consumer distributions.
-* splash
+* **splash**
   * Visual Boot: Tells the kernel to display a graphical boot screen (e.g., the Ubuntu or Fedora logo) instead of raw text output.
   * Default setting for an aesthetic desktop experience.
-* nomodeset
+* **nomodeset**
   * Graphics Troubleshooting: Crucial for fixing black screens or corrupted graphics.
   * It forces the kernel to skip loading video drivers and use basic VESA graphics initially, often allowing you to boot into the desktop to install proper proprietary drivers.	Use when the system freezes or shows a black screen after kernel loading.
-* init=/bin/bash
+* **init=/bin/bash**
   * Emergency Shell: Replaces the standard /sbin/init or /usr/lib/systemd/systemd process with a simple Bash shell, giving you immediate root access to the system for repair.
   * Use when you forget your root password or the system fails to boot into runlevels.
-* ro or rw
+* **ro** or **rw**
   * Root Filesystem Mode: ro mounts the root filesystem as Read-Only initially (standard for safety, as the initramfs will remount it rw later). rw forces it to mount Read-Write immediately.
-  * ro is the safer, common default. Change to rw only if explicitly needed for early-boot modifications.
-* single or 1
+  * `ro` is the safer, common default. Change to rw only if explicitly needed for early-boot modifications.
+* **single** or **1**
   * Single-User Mode (Rescue): Boots the system to a minimal state, usually without networking or graphical interfaces, often requiring the root password.
   * This is ideal for system maintenance.	Use for maintenance or recovery, especially when networking or services are causing issues.
-* systemd.unit=multi-user.target
+* **systemd.unit=multi-user.target**
   * Bypass Graphical Login: Forces the system to boot to a command-line terminal login instead of the graphical desktop (skipping graphical.target).
   * Use when GUI problems prevent login or you want a server-like environment.
-* noapic or acpi=off
+* **noapic** or **acpi=off**
   * Hardware Compatibility (Legacy): Disables the Advanced Programmable Interrupt Controller (noapic) or the Advanced Configuration and Power Interface (acpi=off).
   * These are extreme measures for very old or extremely non-compliant hardware that hangs during boot.	Use as a last resort when the kernel hangs while initializing hardware components.
-* rhgb
+* **rhgb**
   * Red Hat Graphical Boot: Similar to splash, but specifically used by Red Hat/Fedora systems to control their graphical boot experience.
   * Used primarily on RHEL, CentOS, or Fedora distributions.
 
@@ -139,12 +188,16 @@ The authoritative source for all kernel command-line parameters is the official 
 
 Official Linux Kernel Documentation (Current): Search for the `kernel-parameters.rst` document in the official kernel git repository. A common link to this documentation is the `kernel-command-line(7)` manual page, which is linked to the online documentation.
 
+---
 
-#### HIDE FEATURE
+#### SUPPRESSING PARAMETERS AND WARNINGS
 ######
 
+This feature addresses the core tension between offering comprehensive configuration and avoiding user annoyance.
+* **Suppression of "Noise"**: Users who are confident in their configuration (like your preference for empty CMDLINE variables) can permanently hide low-severity warnings or warnings they deem incorrect. This prevents alert fatigue.
+* **Reduced Clutter**: By default, we suppress uncommon or advanced parameters. This significantly cleans up the interface for 90% of users while keeping the full power accessible via the [S]how toggle.
 
-Parameter Coverage grub-wiz manages 26 GRUB parameters covering 99% of home and server use cases:
+**Parameter Coverage**. grub-wiz manages 26 GRUB parameters covering 99% of home and server use cases:
 * Boot timeout & menu configuration
 * Kernel command-line arguments
 * Visual appearance (themes, backgrounds, resolution)
@@ -152,7 +205,7 @@ Parameter Coverage grub-wiz manages 26 GRUB parameters covering 99% of home and 
 * Advanced features (serial console, recovery mode, etc.)
 
 Automatic System Detection On first run, grub-wiz attempts to discover which parameters your system supports by parsing GRUB documentation:
-* ✅ If info grub is available: Parameters not supported on your system are automatically hard-hidden
+* ✅ If info grub is available: Parameters not supported on your system are automatically suppressed.
 * ⚠️ If GRUB docs aren't installed: All 26 parameters remain visible (you can manually hide unused ones)
 To improve detection accuracy, install GRUB documentation:
 ```
@@ -160,94 +213,7 @@ sudo apt install grub-doc # Ubuntu/Debian
 sudo dnf install grub2-common # Fedora/RHEL
 ```
 
-Hard vs Soft Hiding
-* Hard hide: Parameter excluded from interface, validation, and config file
-  * Use hard-hide for unsupported/irrelevant params (e.g., Xen settings on non-Xen systems)
-* Soft hide: Hidden from main interface but still managed and validated
-  Use soft-hide for "set once and forget" params (e.g., DISTRIBUTOR)
-
-
-######
-👍 Gains of the Hide/Suppress Feature
-
-This feature addresses the core tension between offering comprehensive configuration and avoiding user annoyance.
-1. Improved User Experience & Focus
-
-    Suppression of "Noise": Users who are confident in their configuration (like your preference for empty CMDLINE variables) can permanently hide low-severity warnings or warnings they deem incorrect. This prevents alert fatigue.
-
-    Reduced Clutter: You can default uncommon or advanced parameters to hidden, significantly cleaning up the interface for 90% of users while keeping the full power accessible via the [S]how toggle. This helps with the perceived "simplicity" of your app.
-
-2. Flexibility for Development
-
-    Issuing "Opinionated" Warnings: You gain the freedom to include "mostly right" or best-practice warnings (like the low-star GRUB_GFXMODE suggestion) without fear of irritating advanced users. They can simply hide it.
-
-    Wider Scope: You can easily add more obscure or distribution-specific parameters, knowing they won't clutter the default view.
-
-💻 Implementation Details and Persistence
-
-The key to making this work is robust state persistence using the .ini file.
-1. Data Structure for Persistence
-
-Your .ini file (e.g., .grub-wiz-config.ini) would need a dedicated section to store the hidden state for both parameters and warnings.
-Element	Key in .ini	Value in .ini	Example
-Parameters	HiddenParams	Comma-separated list of parameter names.	GRUB_HIDDEN_TIMEOUT,GRUB_ENABLE_CRYPTODISK
-Warnings	SuppressedWarnings	Comma-separated list of warning IDs/Keys.	GRUB_TIMEOUT_STYLE.critical,GRUB_DEFAULT.low
-2. State Management
-
-You would need a central Controller or StateManager class that manages the following actions:
-
-    Load: On startup, read the .ini file and populate internal sets (self.hidden_params, self.suppressed_warnings).
-
-    Save: Write the current sets back to the .ini file whenever a user toggles visibility.
-
-    Toggle: The [h]ide action adds the item to the appropriate set and triggers the save. The [S]how action clears both sets, effectively revealing everything.
-
-3. Warning Identification
-
-For warnings, simply using the parameter name as the key (GRUB_TIMEOUT) is insufficient, as one parameter might generate multiple warnings of different severities (e.g., GRUB_DEFAULT causes a **** error and a * error).
-
-Recommendation: Assign a stable, unique ID to each distinct warning check in your make_warns method, or use a composite key:
-Python
-
-
-
-Suggested default-hidden params: Hide by default (advanced/niche):
-* GRUB_HIDDEN_TIMEOUT (deprecated in favor of TIMEOUT_STYLE)
-* GRUB_RECORDFAIL_TIMEOUT (Ubuntu-specific edge case)
-* GRUB_DISABLE_SUBMENU (rarely needed)
-* GRUB_DISTRIBUTOR (cosmetic, most users don't care)
-* GRUB_GFXMODE (advanced graphics tuning)
-* GRUB_GFXPAYLOAD_LINUX (very advanced)
-* GRUB_ENABLE_CRYPTODISK (specialized encryption setups)
-* GRUB_TERMINAL_INPUT (advanced/troubleshooting)
-* GRUB_DISABLE_LINUX_UUID (very rare use case)
-
-##### Use a composite key for suppression: PARAMETER_NAME + SEVERITY_LEVEL
-WARNING_ID = f'{p2}.{stars[4]}' # e.g., 'GRUB_SAVEDEFAULT.****'
-
-This prevents a user from hiding all warnings for GRUB_SAVEDEFAULT just because they suppressed one minor one.
-
-This feature will make your app much more professional and adaptable to various user needs.
-
----------------------
-  
-  ----
-  ----
-  ## UNCOVERED PARAMS
-* Niche/Server:
-  * GRUB_SERIAL_COMMAND - Serial console config
-  * GRUB_INIT_TUNE - Beep speaker on boot
-  * GRUB_BADRAM - Memory hole workarounds
-  * GRUB_PRELOAD_MODULES - Manual module loading
-  * GRUB_TERMINAL_OUTPUT - Output device (vs INPUT)
-  * GRUB_VIDEO_BACKEND - Force vbe/efi_gop/etc
-* Rare edge cases:
-  * GRUB_DISABLE_LINUX_PARTUUID
-  * GRUB_CMDLINE_LINUX_RECOVERY - Override recovery args
-* Deprecated:
-  * GRUB_HIDDEN_TIMEOUT_QUIET
-  * GRUB_RECORDFAIL (Ubuntu-only, auto-managed)
-
+---
 #### Sparse Override Feature (Under consideration)
 * Effort: Medium-high
 * Value: High - best UX This is the most powerful and user-friendly:

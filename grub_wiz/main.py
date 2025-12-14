@@ -416,7 +416,8 @@ class GrubWiz:
             param_pos = pos = len(self.clues)
 #           keys, indent = [], 30
             tab = self.get_tab()
-            param_lines = self.body_param_lines(param_name, pos==picked)
+            is_current = bool(pos==picked)
+            param_lines = self.body_param_lines(param_name, is_current)
             self.clues.append(Clue('param', param_name))
             for line in param_lines:
                 self.win.add_body(line)
@@ -437,12 +438,18 @@ class GrubWiz:
                 if not is_hidden or self.show_hidden_warns:
                     mark = '✘' if is_hidden else ' '
                     sub_text = f'{mark} {hey[0]:>4}'
-                    line = f' {sub_text:>{tab.lwid}}  {hey[1]}'
+                    line = f'{sub_text:>{tab.lwid}}  {hey[1]}'
                     cnt = self.add_wrapped_body_line(line,
                                         tab.lwid+2, pos==picked)
                     self.clues.append(Clue('warn', warn_key, cnt))
                     pos += cnt
             self.clues[clue_idx].group_cnt = pos - param_pos
+
+            if is_current:
+                emits = self.drop_down_lines(param_name)
+                pos += len(emits)
+                for emit in emits:
+                    self.win.add_body(emit)
 
     def get_diffs(self):
         """ get the key/value pairs with differences"""
@@ -694,7 +701,7 @@ class GrubWiz:
             # cfg = self.param_cfg[param_name]
             # value = self.param_values[param_name]
             emits += param_lines
-            
+
             emits += self.drop_down_lines(param_name)
 
             # truncate the lines to show to all that fit..
@@ -728,7 +735,6 @@ class GrubWiz:
         
         if self.spins.guide == 'Off':
             return []
-
 
         cfg = self.param_cfg.get(param_name, None)
         if not cfg:
