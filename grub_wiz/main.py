@@ -2,7 +2,12 @@
 """
     grub-wiz: the help grub file editor assistant
 """
-# pylint: disable=invalid_name,broad-exception-caught
+# pylint: disable=invalid-name,broad-exception-caught
+# pylint: disable=too-many-locals,too-few-public-methods,too-many-branches
+# pylint: disable=too-many-nested-blocks,too-many-statements
+# pylint: disable=too-many-public-methods,line-too-long
+# pylint: disable=too-many-instance-attributes
+
 
 import sys
 import os
@@ -34,7 +39,7 @@ class Tab:
         >----left----|a |---right ---|
          |<---lwid-->|p |<---rwid--->|
          la          lz ra           rz
-        
+
         :param self: provides access to the "tab" positions
         :param cols: columns in window
         :param param_wid: max wid of all param names
@@ -71,7 +76,7 @@ class ScreenStack:
                                 scroll_pos=-1, prev_pos=-1)
         self.win.pick_pos = self.win.scroll_pos = 0
         return 0
-    
+
     def pop(self):
         """ TBD """
         if self.stack:
@@ -79,6 +84,7 @@ class ScreenStack:
             self.win.pick_pos = self.curr.pick_pos
             self.win.scroll_pos = self.curr.scroll_pos
             return self.curr.prev_pos
+        return None
 
     def is_curr(self, screens):
         """TBD"""
@@ -102,7 +108,7 @@ class ScreenStack:
 
 class Clue:
     """
-    A semi-formal object that enforces fixed required fields (cat, ident) 
+    A semi-formal object that enforces fixed required fields (cat, ident)
     and accepts arbitrary keyword arguments.
     """
     def __init__(self, cat: str, ident: str='', group_cnt=1, **kwargs: Any):
@@ -116,10 +122,10 @@ class Clue:
         # 1. Rigorous Fixed Field Assignment (Validation)
         # Ensure the fixed fields are not empty/invalid if needed
         if not cat:
-             raise ValueError("The 'cat' field is required and cannot be empty.")
+            raise ValueError("The 'cat' field is required and cannot be empty.")
         # if not ident:
              # raise ValueError("The 'ident' field is required and cannot be empty.")
-             
+
         self.cat = cat
         self.ident = ident
         # self.keys = keys
@@ -130,7 +136,7 @@ class Clue:
         # and assign them directly as attributes to the instance.
         for key, value in kwargs.items():
             setattr(self, key, value)
-            
+
     def __repr__(self):
         # A helpful representation similar to SimpleNamespace
         attrs = [f"{k}={v!r}" for k, v in self.__dict__.items()]
@@ -176,7 +182,7 @@ class GrubWiz:
         self.bak_lines = None # the currently viewed .bak file
         self.bak_path = None
         self._reinit()
-        
+
     def _reinit(self):
         """ Call to initialize or re-initialize with new /etc/default/grub """
         self.param_cfg = {}
@@ -236,7 +242,7 @@ class GrubWiz:
     def get_tab(self):
         """ get the tab positions of the print cols """
         return Tab(self.win.cols, self.param_name_wid)
-    
+
     def setup_win(self):
         """TBD """
         spinner = self.spinner = OptionSpinner()
@@ -266,17 +272,18 @@ class GrubWiz:
         spinner.add_key('fancy_headers', '_ - cycle fancy headers (Off/Underline/Reverse)',
                         vals=['Underline', 'Reverse', 'Off'], keys=[ord('_')])
 
-        
+
         win_opts = ConsoleWindowOpts()
         win_opts.head_line = True
         win_opts.keys = spinner.keys
         win_opts.ctrl_c_terminates = False
         win_opts.return_if_pos_change = True
         win_opts.single_cell_scroll_indicator = True
+        win_opts.dialog_abort = True
         self.win = ConsoleWindow(win_opts)
-                                 
+
         self.ss = ScreenStack(self.win, self.spins, SCREENS)
-        
+
     def _get_enums_regex(self):
         """ TBD"""
         enums, regex, param_name = None, None, None
@@ -324,7 +331,6 @@ class GrubWiz:
                 self.win.add_body(f'{' ':>6}{line[:wid]}')
                 line = line[wid:]
 
-
     def add_review_head(self):
         """ Construct the review screen header
             Presumes the body was created and self.clues[]
@@ -340,8 +346,7 @@ class GrubWiz:
         header = f'{header:<24}'
         self.add_common_head2(header)
         self.ensure_visible_group()
-        return
-        
+
     def truncate_line(self, line):
         """ TBD """
         wid = self.win.cols-1
@@ -363,6 +368,14 @@ class GrubWiz:
             self.win.add_body(wrap)
         return len(wraps) # lines added
 
+    def is_warn_hidden(self, param_name, hey):
+        """ TBD """
+        if not self.show_hidden_warns:
+            warn_key = f'{param_name} {hey[1]}'
+            return self.hider.is_hidden_warn(warn_key)
+        return False
+
+
     def add_review_body(self):
         """ TBD """
         def add_review_item(param_name, value, old_value=None, heys=None):
@@ -381,23 +394,28 @@ class GrubWiz:
         warns, all_warn_keys = self.wiz_validator.make_warns(self.param_values)
         self.hider.purge_orphan_keys(all_warn_keys) # TODO: just run this once?
         if self.must_reviews is None:
-            self.must_reviews = list(diffs.keys())
-            self.clues = [] # info about the body rows
-            for param_name, heys in warns.items():
-                for hey in heys:
-                    words = re.findall(r'\b[_A-Z]+\b', hey[1])
-                    for word in words:
-                        other_name = word
-                        if f'GRUB_{word}'in self.param_values:
-                            other_name = f'GRUB_{word}'
-                        elif word not in self.param_values:
-                            continue
-                        if other_name not in self.must_reviews:
-                            self.must_reviews.append(other_name)
+            self.must_reviews = set()
+        for param_name in list(diffs.keys()):
+            self.must_reviews.add(param_name)
+        for param_name, heys in warns.items():
+            for hey in heys:
+#               if self.is_warn_hidden(param_name, hey):
+#                   continue
+                words = re.findall(r'\b[_A-Z]+\b', hey[1])
+                for word in words:
+                    other_name = word
+                    if f'GRUB_{word}'in self.param_values:
+                        other_name = f'GRUB_{word}'
+                    elif word not in self.param_values:
+                        continue
+                    if other_name not in self.must_reviews:
+                        self.must_reviews.append(other_name)
                 if param_name not in self.must_reviews:
-                    self.must_reviews.append(param_name)
-            
-        for param_name in self.must_reviews:
+                    self.must_reviews.add(param_name)
+
+        for param_name in self.param_names:
+            if param_name not in self.must_reviews:
+                continue
             if param_name in diffs:
                 old_value, new_value = diffs[param_name]
                 item = add_review_item(param_name, new_value, old_value)
@@ -541,7 +559,7 @@ class GrubWiz:
 
         # Now output the sections using add_header with resume
         for idx, (text, attr) in enumerate(result_sections):
-            resume = (idx > 0)  # Resume for all but the first section
+            resume = bool(idx > 0)  # Resume for all but the first section
             self.win.add_header(text, attr=attr, resume=resume)
 
     def add_common_head1(self, title):
@@ -709,12 +727,12 @@ class GrubWiz:
             if len(emits) > view_size:
                 hide_cnt = 1 + len(emits) - view_size
                 emits = emits[0:view_size-1]
-                emits.append(f'{lead}... beware: {hide_cnt} HIDDEN lines ...')
+                emits.append(f'... beware: {hide_cnt} HIDDEN lines ...')
             for emit in emits:
                 win.add_body(emit)
             self.clues.append(Clue('param', 'param_name', len(emits)))
         return found_current
-    
+
     def drop_down_lines(self, param_name):
         """ TBD """
         def gen_enum_lines():
@@ -732,7 +750,7 @@ class GrubWiz:
                 wrapped += textwrap.fill(line, width=wid-1, subsequent_indent=' '*5)
                 wrapped += '\n'
             return wrapped.split('\n')
-        
+
         if self.spins.guide == 'Off':
             return []
 
@@ -742,7 +760,7 @@ class GrubWiz:
         emits, wraps = [], [] # lines to emit
         lead = '    '
         wid = self.win.cols - len(lead)
-        
+
         if self.spins.guide == 'Full':
             text = cfg['guidance']
             lines = text.split('\n')
@@ -770,7 +788,7 @@ class GrubWiz:
 
         while not valid:
             prompt = f'Edit {name} [{hint}]'
-            value = win.answer(prompt=prompt, seed=str(value), height=2, esc_abort=True)
+            value = win.answer(prompt=prompt, seed=str(value), height=2)
             if value is None: # aborted
                 return
             valid = True # until proven otherwise
@@ -788,7 +806,7 @@ class GrubWiz:
 
         while not valid:
             prompt = f'Edit {name} [EXPERT MODE: {hint}]'
-            value = win.answer(prompt=prompt, seed=str(value), height=2, esc_abort=True)
+            value = win.answer(prompt=prompt, seed=str(value), height=2)
             if value is None: # aborted
                 return
 
@@ -834,15 +852,14 @@ class GrubWiz:
         self.backups = self.backup_mgr.get_backups()
         self.ordered_backup_pairs = sorted(self.backups.items(),
                            key=lambda item: item[1], reverse=True)
-        
+
     def request_backup_tag(self, prompt, seed='custom'):
         """ Prompt user for a valid tag ... turn spaces into '-'
          automatically """
         regex = r'^[-_A-Za-z0-9]+$'
         hint = f'regex={regex}'
         while True:
-            answer = self.win.answer(esc_abort=True, seed=seed,
-                prompt=f"{prompt} [{hint}]]")
+            answer = self.win.answer(seed=seed, prompt=f"{prompt} [{hint}]]")
             if answer is None:
                 return None
             answer = answer.strip()
@@ -868,8 +885,7 @@ class GrubWiz:
 
     def really_wanna(self, act):
         """ TBD """
-        answer = self.win.answer(esc_abort=True, seed='y',
-            prompt=f"Enter 'yes' to {act}")
+        answer = self.win.answer(seed='y', prompt=f"Enter 'yes' to {act}")
         if answer is None:
             return False
         answer = answer.strip().lower()
@@ -888,7 +904,7 @@ class GrubWiz:
         contents += "#--# NOTE: following are params NOT handled by 'grub-wiz'\n"
         contents += "#--#     - update these manually.\n"
         contents += ''.join(self.parsed.other_lines)
-        
+
         self.win.stop_curses()
         print("\033[2J\033[H") # 'clear'
         print('\n\n===== Left grub-wiz to update GRUB ====> ')
@@ -963,12 +979,12 @@ class GrubWiz:
     def main_loop(self):
         """ TBD """
         assert self.parsed.get_etc_default_grub()
-        
+
         self.setup_win()
         self.do_start_up_backup()
         win, spins = self.win, self.spins # shorthand
         self.next_prompt_seconds = [0.1, 0.1]
-        
+
         while True:
             if self.ss.is_curr(HELP_ST):
                 win.set_pick_mode(False)
@@ -1075,7 +1091,7 @@ class GrubWiz:
                                     self.hider.unhide_warn(clue.ident)
                                 else:
                                     self.hider.hide_warn(clue.ident)
-                        
+
                 if self.ss.act_in('write', (HOME_ST, REVIEW_ST)):
                     if self.ss.is_curr(HOME_ST):
                         self.prev_pos = self.ss.push(REVIEW_ST, self.prev_pos)
@@ -1211,4 +1227,3 @@ if __name__ == '__main__':
         print("exception:", str(exce))
         print(traceback.format_exc())
         sys.exit(15)
-

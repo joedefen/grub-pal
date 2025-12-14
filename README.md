@@ -1,4 +1,4 @@
->  **This project is under development ... come back later.**
+>  **Note: This is version 1.0.x - please report issues at https://github.com/joedefen/grub-wiz/issues**
 
 ## GrubWiz: The Helpful GRUB Bootloader Assistant
 
@@ -23,18 +23,21 @@ GrubWiz makes complex, manual configuration steps as easy as a few keystrokes in
   * In its "review" screen, cross-parameter and sensibility checks are done and issues are presented with a chance to fix them immediately.
 
 * **Handles "Unknown" Parameters**
-  * In the case, a parameters is not supported, you can manually add it to `/etc/default/grub` and the supported and unsupported parameters will be combined.
+  * In the case a parameter is not supported, you can manually add it to `/etc/default/grub` and the supported and unsupported parameters will be combined.
   * Before committing, `grub-script-check` is run to catch syntax errors on the combination grub file.
 
 * **Backup / Restore**
   * When loading and before saving, if the contents is different that other saved backups, you are prompted to name a new backup.
-  * In the restore screen, you can restore backups, delete backups, (TODO) retag backups.
+  * In the restore screen, you can restore backups, delete backups, retag backups, and view backup contents.
 
 #### Installation and Running
 
 * `grub-wiz` is available on PyPI and installed via: `pipx install grub-wiz`
 * Typically, just run `grub-wiz` w/o arguments
 * **Note**: `grub-wiz` makes itself root using `sudo` and will prompt for password if needed.
+* **Getting Help**:
+  * In the app: Press `?` to view navigation keys and other key assignments
+  * From terminal: Run `grub-wiz --help` to see command-line options
 ---
 #### How to Use grub-wiz
 ##### EDIT SCREEN
@@ -63,14 +66,14 @@ Running `grub-wiz` brings a screen similar to:
  [Security & Advanced]
 ```
 NOTES:
-* `grub-wiz` supports more parameters than shown; you can see them all with the `s` key. The parameters that are suppressed will be marked with an `✘` (wand called x-params).
+* `grub-wiz` supports more parameters than shown; you can see them all with the `s` key. The parameters that are suppressed will be marked with an `✘` (and called x-params).
 * In the header, `⮜–⮞` indicates you can cycle through a list of values with the right/left arrow keys.
-* Also, `[e]dit` indicates you can typ `e` to free-style edit the parameter; in that case, your change will be check with a regular expression and you must make it match.
+* Also, `[e]dit` indicates you can type `e` to free-style edit the parameter; in that case, your change will be checked with a regular expression and you must make it match.
 * When you have finished your changes, then type `w` to write the parameter after you **review** them.
-* For editing the `CMDLINE` see "Essential Linux Kernel Parameters (GRUB Arguments)" in the Appendix.
+* For editing the `CMDLINE` parameters, see "Essential Linux Kernel Parameters (GRUB Arguments)" in the Appendix.
 
 ##### REVIEW SCREEN
-The next step in update the `grub` configuration is the REVIEW screen:
+The next step in updating the `grub` configuration is the REVIEW screen:
 ```
  REVIEW  [g]uide=Off [w]rite [R]estore ESC:back ?:help [q]uit  𝚫=1
                              ⮜–⮞ [e]dit
@@ -90,7 +93,7 @@ NOTES:
 * When done with your review, type `w` again to finally write the `grub` file; if successful, you will be given the choice to reboot or shutdown or return to `grub-wiz`.
 
 ##### GUIDANCE LEVELS
-Typing `g' on the EDIT and REVIEW screens cycles through its possible values, None, Enums, and Full.  Full guidance for the `TIMEOUT` parameter would look like:
+Typing `g` on the EDIT and REVIEW screens cycles through its possible values, None, Enums, and Full.  Full guidance for the `TIMEOUT` parameter would look like:
 ```
 >  DISABLE_OS_PROBER·······  false                                    
                           *  perhaps set "true" since no multi-boot d▶
@@ -103,7 +106,6 @@ Typing `g' on the EDIT and REVIEW screens cycles through its possible values, No
        🞏 true: Do not search for other operating systems.
 ```
 
-
 #### RESTORE SCREEN
 When you enter the restore screen by typing `R` from the EDIT or REVIEW screen, it looks something like:
 ```
@@ -113,12 +115,11 @@ When you enter the restore screen by typing `R` from the EDIT or REVIEW screen, 
    20251210-170809-F68D6B8C.custom.bak
    20251210-003216-BC58FF3D.orig.bak
 ```
-NOTES:
-- the leading `●` indicates it is the backup for the current session.
+**NOTE**: the leading `●` indicates it is the backup for the current session.
 
-Backup and restore features:
+**Backup and restore features**:
  - backups of `/etc/default/grub` are stored in `~/.config/grub-wiz`
- - backups are named `YYYYMMDD.HHMMSS.{8-hex-digit-checksum}.{tag}.txt`; you supply the tag.
+ - backups are named `YYYYMMDD-HHMMSS-{8-hex-digit-checksum}.{tag}.bak`; you supply the tag.
  - if there are no backup files, on startup `grub-wiz` automatically creates one with tag='orig'
  - if there are backup files and none match the current `/etc/default/grub`, `grub-wiz` prompts you for a tag for its backup (you may decline).
  - tags must be word/phase-like strings with only [-_A-Za-z0-9] characters (spaces will be converted to "-" characters)
@@ -133,13 +134,7 @@ Because GRUB can vary per system, `grub-wiz` uses `info -f grub -n "Simple Confi
 - If `info` provides inaccurate results, you can disable discovery:
     - `grub-wiz --discovery=disable` (use "enable" or "show" for other actions)
 
-👨‍💻 Development Status
-
-    * Foundation: Built upon the robust console-window curses foundation.
-    * Current State: Initial feature development and safety implementation.
-    * Contributions: Contributions are welcome! See the CONTRIBUTING.md for guidelines.
-
-## Appendix
+## Appendix: Additional Details
 
 #### Running grub-wiz at recovery time
 
@@ -191,13 +186,12 @@ Official Linux Kernel Documentation (Current): Search for the `kernel-parameters
 ---
 
 #### SUPPRESSING PARAMETERS AND WARNINGS
-######
 
 This feature addresses the core tension between offering comprehensive configuration and avoiding user annoyance.
 * **Suppression of "Noise"**: Users who are confident in their configuration (like your preference for empty CMDLINE variables) can permanently hide low-severity warnings or warnings they deem incorrect. This prevents alert fatigue.
 * **Reduced Clutter**: By default, we suppress uncommon or advanced parameters. This significantly cleans up the interface for 90% of users while keeping the full power accessible via the [S]how toggle.
 
-**Parameter Coverage**. grub-wiz manages 26 GRUB parameters covering 99% of home and server use cases:
+**Parameter Coverage**. grub-wiz manages ~27 GRUB parameters covering 99% of home and server use cases:
 * Boot timeout & menu configuration
 * Kernel command-line arguments
 * Visual appearance (themes, backgrounds, resolution)
@@ -206,7 +200,7 @@ This feature addresses the core tension between offering comprehensive configura
 
 Automatic System Detection On first run, grub-wiz attempts to discover which parameters your system supports by parsing GRUB documentation:
 * ✅ If info grub is available: Parameters not supported on your system are automatically suppressed.
-* ⚠️ If GRUB docs aren't installed: All 26 parameters remain visible (you can manually hide unused ones)
+* ⚠️ If GRUB docs aren't installed: All ~27 parameters remain visible (you can manually hide unused ones)
 To improve detection accuracy, install GRUB documentation:
 ```
 sudo apt install grub-doc # Ubuntu/Debian
@@ -214,7 +208,10 @@ sudo dnf install grub2-common # Fedora/RHEL
 ```
 
 ---
-#### Sparse Override Feature (Under consideration)
+
+## Future Considerations
+
+#### Sparse Override Feature
 * Effort: Medium-high
 * Value: High - best UX This is the most powerful and user-friendly:
 
