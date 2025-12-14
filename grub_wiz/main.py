@@ -14,7 +14,7 @@ import curses as cs
 from argparse import ArgumentParser
 from types import SimpleNamespace
 from typing import Any #, Tuple #, Opt
-from .ConsoleWindowCopy import OptionSpinner, ConsoleWindow, ConsoleWindowOpts
+from console_window import OptionSpinner, ConsoleWindow, ConsoleWindowOpts
 from .CannedConfig import CannedConfig
 from .GrubParser import GrubParser
 from .GrubCfgParser import get_top_level_grub_entries
