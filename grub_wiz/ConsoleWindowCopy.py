@@ -33,7 +33,8 @@ class ConsoleWindowOpts:
     """
     __slots__ = ['head_line', 'head_rows', 'body_rows', 'body_cols', 'keys',
                  'pick_mode', 'pick_size', 'mod_pick', 'ctrl_c_terminates',
-                 'return_if_pos_change', 'min_cols_rows', 'dialog_abort', 'dialog_return']
+                 'return_if_pos_change', 'min_cols_rows', 'dialog_abort', 'dialog_return',
+                 'single_cell_scroll_indicator']
 
     def __init__(self, **kwargs):
         """
@@ -52,6 +53,7 @@ class ConsoleWindowOpts:
         :param min_cols_rows: Minimum terminal size as (cols, rows) tuple (default: (70, 20))
         :param dialog_abort: How ESC aborts dialogs: None, "ESC", "ESC-ESC" (default: "ESC")
         :param dialog_return: Which key submits dialogs: "ENTER", "TAB" (default: "ENTER")
+        :param single_cell_scroll_indicator: If True, shows single-cell position dot; if False, shows proportional range (default: False)
         """
         self.head_line = kwargs.get('head_line', True)
         self.head_rows = kwargs.get('head_rows', 50)
@@ -66,6 +68,7 @@ class ConsoleWindowOpts:
         self.min_cols_rows = kwargs.get('min_cols_rows', (70, 20))
         self.dialog_abort = kwargs.get('dialog_abort', 'ESC')
         self.dialog_return = kwargs.get('dialog_return', 'ENTER')
+        self.single_cell_scroll_indicator = kwargs.get('single_cell_scroll_indicator', False)
 
         # Validate dialog_abort
         if self.dialog_abort not in [None, 'ESC', 'ESC-ESC']:
@@ -517,6 +520,7 @@ class ConsoleWindow:
         atexit.register(ConsoleWindow.stop_curses)
         ignore_ctrl_c()
         ConsoleWindow.static_scr = scr = curses.initscr()
+        curses.set_escdelay(25)  # Reduce ESC key delay from 1000ms to 25ms
         curses.noecho()
         curses.cbreak()
         curses.curs_set(0)
@@ -902,7 +906,8 @@ class ConsoleWindow:
             ind_pos = self._scroll_indicator_col()
             if ind_pos >= 0:
                 bot, cnt = ind_pos, 1
-                if 0 < ind_pos < self.cols-1:
+                if not self.opts.single_cell_scroll_indicator and 0 < ind_pos < self.cols-1:
+                    # Proportional range indicator
                     width = self.scroll_view_size/self.body.row_cnt*self.cols
                     bot = max(int(round(ind_pos-width/2)), 1)
                     top = min(int(round(ind_pos+width/2)), self.cols-1)

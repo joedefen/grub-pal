@@ -1,10 +1,30 @@
 #!/usr/bin/env python3
 """
 TODO:
- - implement reset config data
- - replace [x] with underscored x in header
- - handle wrapping param / warns that are long
- - (maybe) writing YAML into .config directory and read it first (allow user extension)
+ - clean up the Restore Screen ... add replace tag action.
+ - implement reset config data?
+ - replace [x] with underscored x in 
+
+
+Your feature set looks solid for v1.0! Here's my take: What you have is good:
+- ✅ RESTORE title
+- ✅ [t]ag for re-tagging
+- ✅ Auto .orig.bak on first start
+- ✅ Prompt to tag after unique writes
+- ✅ Detect unmatched configs on startup
+
+Nice-to-haves (consider for v1.0 or defer to v1.1):
+- Show which backup matches current config - Add a marker like ● or ⯀ next to the backup that matches what's currently in grub:
+  ● 20251211-211603-13C6E037.with-prober.bak  ← current
+    20251210-170809-F68D6B8C.custom.bak
+  This helps users know "where they are" without having to remember.
+- View backup contents - You mentioned read-only scrolled view. This is useful but probably v1.1 material. Users can always look at the files directly if desperate.
+- Confirmation on [r]estore - Do you already have "Are you sure?" for restore? That's pretty important since it overwrites current config.
+- Sort order - Looks like newest first? That's good.
+- My vote: Add the "current config" marker if easy, defer viewing contents to v1.1. Everything else looks complete for a solid v1.0!
+
+
+ 
 """
 # pylint: disable=invalid_name,broad-exception-caught
 
@@ -18,7 +38,7 @@ import curses as cs
 from argparse import ArgumentParser
 from types import SimpleNamespace
 from typing import Any #, Tuple #, Opt
-from .ConsoleWindowCopy import OptionSpinner, ConsoleWindow
+from .ConsoleWindowCopy import OptionSpinner, ConsoleWindow, ConsoleWindowOpts
 from .CannedConfig import CannedConfig
 from .GrubParser import GrubParser
 from .GrubCfgParser import get_top_level_grub_entries
@@ -30,6 +50,28 @@ from .ParamDiscovery import ParamDiscovery
 
 HOME_ST, REVIEW_ST, RESTORE_ST, HELP_ST = 0, 1, 2, 3  # screen numbers
 SCREENS = ('HOME', 'REVIEW', 'RESTORE', 'HELP') # screen names
+
+class Tab:
+    """ TBD """
+    def __init__(self, cols, param_wid):
+        """           g
+        >----left----|a |---right ---|
+         |<---lwid-->|p |<---rwid--->|
+         la          lz ra           rz
+        
+        :param self: provides access to the "tab" positions
+        :param cols: columns in window
+        :param param_wid: max wid of all param names
+        """
+        self.cols = cols
+        self.la = 1
+        self.lz = 1 + param_wid + 4
+        self.lwid = self.lz - self.la
+        self.gap = 2
+        self.ra = self.lz + 2
+        self.rz = self.cols
+        self.rwid = self.rz - self.ra
+        self.wid = self.rz - self.la
 
 class ScreenStack:
     """ TBD """
@@ -87,7 +129,7 @@ class Clue:
     A semi-formal object that enforces fixed required fields (cat, ident) 
     and accepts arbitrary keyword arguments.
     """
-    def __init__(self, cat: str, ident: str='', keys='', **kwargs: Any):
+    def __init__(self, cat: str, ident: str='', group_cnt=1, **kwargs: Any):
         """
         Initializes the Clue object.
 
@@ -104,7 +146,8 @@ class Clue:
              
         self.cat = cat
         self.ident = ident
-        self.keys = keys
+        # self.keys = keys
+        self.group_cnt = group_cnt
 
         # 2. Forgiving Variable Field Assignment
         # Iterate over the arbitrary keyword arguments (kwargs)
@@ -148,6 +191,7 @@ class GrubWiz:
         self.ordered_backup_pairs = None
         self.must_reviews = None
         self.clues = None
+        self.next_prompt_seconds = [3.0]
         self.ss = None
         self.is_other_os = None # don't know yet
         self.show_hidden_params = False
@@ -209,6 +253,10 @@ class GrubWiz:
         except Exception:
             pass
         self.hider = WizHider(param_cfg=self.param_cfg)
+
+    def get_tab(self):
+        """ get the tab positions of the print cols """
+        return Tab(self.win.cols, self.param_name_wid)
     
     def setup_win(self):
         """TBD """
@@ -234,10 +282,18 @@ class GrubWiz:
         spinner.add_key('escape', 'ESC - back to prev screen',
                         category="action", keys=[27,])
         spinner.add_key('quit', 'q,ctl-c - quit the app', category='action', keys={0x3, ord('q')})
+        spinner.add_key('fancy_headers', '_ - cycle fancy headers (Off/Underline/Reverse)',
+                        vals=['Underline', 'Reverse', 'Off'], keys=[ord('_')])
 
-        self.win = ConsoleWindow(head_line=True,
-                                 keys=spinner.keys, ctrl_c_terminates=False)
-        self.win.opts.return_if_pos_change = True
+        
+        win_opts = ConsoleWindowOpts()
+        win_opts.head_line = True
+        win_opts.keys = spinner.keys
+        win_opts.ctrl_c_terminates = False
+        win_opts.return_if_pos_change = True
+        win_opts.single_cell_scroll_indicator = True
+        self.win = ConsoleWindow(win_opts)
+                                 
         self.ss = ScreenStack(self.win, self.spins, SCREENS)
         
     def _get_enums_regex(self):
@@ -263,7 +319,7 @@ class GrubWiz:
     def add_restore_head(self):
         """ TBD """
         header = '[d]elete [r]estore ?:help [q]uit'
-        self.win.add_header(header)
+        self.add_fancy_header(header)
 
     def add_restore_body(self):
         """ TBD """
@@ -275,39 +331,38 @@ class GrubWiz:
             Presumes the body was created and self.clues[]
             is populated.
         """
-        picked, header = self.win.pick_pos, ''
-        if 0 <= picked < len(self.clues):
-            header += self.clues[picked].keys
-        header += ' [w]rite ?:help [q]uit'
-        self.win.add_header(header)
-        self.hider.write_if_dirty()
-        if self.hidden_stats.warn == 0:
-            return
-        # if any param is hidden on this screen, then show
-        # a second line
-        header = '   [s]hide:'
-        if not self.show_hidden_warns:
-            header = '[s]how:'
-        if self.hidden_stats.warn:
-            header += f' {self.hidden_stats.warn} hidden warnings'
-        self.win.add_header(header)
+        self.add_common_head1('REVIEW')
+
+        # if any warn is hidden on this screen, then show
+        header, cnt = '', self.hidden_stats.warn
+        if cnt:
+            header = 's:hide' if self.show_hidden_warns else '[s]how'
+            header += f' {cnt} ✘-warns'
+        header = f'{header:<24}'
+        self.add_common_head2(header)
+        self.ensure_visible_group()
+        return
         
-        
-    def add_wrapped_body_line(self, line, indent):
+    def truncate_line(self, line):
         """ TBD """
-        win = self.win
+        wid = self.win.cols-1
+        if len(line) > wid:
+            line = line[:wid-1] + '▶'
+        return line
+
+    def add_wrapped_body_line(self, line, indent, is_current):
+        """ TBD """
+        if not is_current:
+            self.win.add_body(self.truncate_line(line))
+            return 1
+
         wid = self.win.cols
-        wrapped = textwrap.fill(line, width=wid,
+        wrapped = textwrap.fill(line, width=wid-1,
                     subsequent_indent=' '*indent)
-        wrapped += '\n'
-        count = 0
         wraps = wrapped.split('\n')
         for wrap in wraps:
-            if wrap:
-                win.add_body(wrap)
-                count += 1
-        return count - 1 # extra lines
-
+            self.win.add_body(wrap)
+        return len(wraps) # lines added
 
     def add_review_body(self):
         """ TBD """
@@ -358,22 +413,23 @@ class GrubWiz:
         picked = self.win.pick_pos
 
         for param_name, ns in reviews.items():
-            pos = len(self.clues)
-            param_line, keys, indent = self.body_param_line(param_name, pos, picked)
-            changed = bool(ns.old_value is not None and str(ns.value) != str(ns.old_value))
-            if pos == picked:
-                extras = self.add_wrapped_body_line(param_line, indent)
-            else:
-                self.win.add_body(param_line)
+            clue_idx = len(self.clues)
+            param_pos = pos = len(self.clues)
+#           keys, indent = [], 30
+            tab = self.get_tab()
+            param_lines = self.body_param_lines(param_name, pos==picked)
+            self.clues.append(Clue('param', param_name))
+            for line in param_lines:
+                self.win.add_body(line)
+            pos += len(param_lines)
 
-            if changed:
-                keys = ' [u]ndo' + keys
-            self.clues.append(Clue('param', param_name, keys=keys))
-
+            changed = bool(ns.old_value is not None
+                           and str(ns.value) != str(ns.old_value))
             if changed:
                 pos += 1
-                self.win.add_body(f'  {'was':>{self.param_name_wid+4}}  {ns.old_value}')
+                self.win.add_body(f'{"was":>{tab.lwid}}  {ns.old_value}')
                 self.clues.append(Clue('nop'))
+
             for hey in ns.heys:
                 warn_key = f'{param_name} {hey[1]}'
                 is_hidden = self.hider.is_hidden_warn(warn_key)
@@ -381,14 +437,13 @@ class GrubWiz:
 
                 if not is_hidden or self.show_hidden_warns:
                     mark = '✘' if is_hidden else ' '
-                    line = f'{mark} {hey[0]:>{self.param_name_wid+4}}  {hey[1]}'
-                    pos += 1
-                    if pos == picked:
-                        self.add_wrapped_body_line(line, indent)
-                    else:
-                        self.win.add_body(line)
-                    self.clues.append(Clue('issue', warn_key,
-                               keys=' [x]unhide' if is_hidden else' [x]hide'))
+                    sub_text = f'{mark} {hey[0]:>4}'
+                    line = f' {sub_text:>{tab.lwid}}  {hey[1]}'
+                    cnt = self.add_wrapped_body_line(line,
+                                        tab.lwid+2, pos==picked)
+                    self.clues.append(Clue('warn', warn_key, cnt))
+                    pos += cnt
+            self.clues[clue_idx].group_cnt = pos - param_pos
 
     def get_diffs(self):
         """ get the key/value pairs with differences"""
@@ -399,98 +454,171 @@ class GrubWiz:
                 diffs[key] = (value, new_value)
         return diffs
 
-    def add_home_head(self):
+    def add_fancy_header(self, line):
+        """
+        Parses header line and adds it with fancy formatting if enabled.
+        Modes: 'Off' (normal), 'Underline' (underlined keys), 'Reverse' (reverse video keys)
+        Converts [x]text to formatted x (brackets removed) when mode is on.
+        Also handles x:text patterns by formatting x.
+        If first word is all-caps, makes it BOLD.
+        """
+
+        mode = self.spins.fancy_headers
+        if mode == 'Off':
+            # Fancy mode off, just add the line normally
+            self.win.add_header(line)
+            return
+
+        # Choose the attribute based on mode
+        key_attr = (cs.A_UNDERLINE|cs.A_BOLD) if mode == 'Underline' else cs.A_REVERSE
+
+        # Pattern to match [x]text or x:text (single letter before colon)
+        # We'll process the line character by character to handle both patterns
+        result_sections = []  # List of (text, attr) tuples
+        i = 0
+        current_text = ""
+
+        # Check if line starts with all-caps word and extract it
+        stripped = line.lstrip()
+        if stripped:
+            first_word_match = stripped.split()[0] if stripped.split() else ''
+            if first_word_match and first_word_match.isupper() and first_word_match.isalpha():
+                # Add leading whitespace
+                leading_space = line[:len(line) - len(stripped)]
+                if leading_space:
+                    result_sections.append((leading_space, None))
+                # Add the all-caps word in BOLD
+                result_sections.append((first_word_match, cs.A_BOLD))
+                # Skip past it in our processing
+                i = len(leading_space) + len(first_word_match)
+
+        while i < len(line):
+            # Check for [x]text pattern
+            if line[i] == '[' and i + 2 < len(line) and line[i + 2] == ']':
+                # Save any accumulated normal text
+                if current_text:
+                    result_sections.append((current_text, None))
+                    current_text = ""
+
+                # Extract the key letter and add it with chosen attribute
+                key_char = line[i + 1]
+                result_sections.append((key_char, key_attr))
+                i += 3  # Skip past [x]
+
+            # Check for x:text pattern (single letter/digit/? followed by colon)
+            elif (i + 1 < len(line) and line[i + 1] == ':' and
+                  (i == 0 or line[i - 1] == ' ') and
+                  (line[i].isalnum() or line[i] == '?')):  # Only valid key characters
+                # This looks like x:text - format the x
+                if current_text:
+                    result_sections.append((current_text, None))
+                    current_text = ""
+
+                key_char = line[i]
+                result_sections.append((key_char, key_attr))
+                result_sections.append((':', None))  # Add the colon without formatting
+                i += 2
+
+            else:
+                # Regular character
+                current_text += line[i]
+                i += 1
+
+        # Add any remaining text
+        if current_text:
+            result_sections.append((current_text, None))
+
+        # Now output the sections using add_header with resume
+        for idx, (text, attr) in enumerate(result_sections):
+            resume = (idx > 0)  # Resume for all but the first section
+            self.win.add_header(text, attr=attr, resume=resume)
+
+    def add_common_head1(self, title):
         """ TBD"""
-        header = 'EDIT SCREEN ::'
+        header = f'{title} '
         level = self.spins.guide
         header += f' [g]uide={level} [w]rite [R]estore ?:help [q]uit'
-        self.win.add_header(header)
-
-        header = f'{header:<24}' # make is so it does not jump so much
-
+        header += f'  𝚫={len(self.get_diffs())}'
+        self.add_fancy_header(header)
         self.hider.write_if_dirty()
-        if self.hidden_stats.param == 0:
-            return
+
+    def add_common_head2(self, left):
+        """ TBD"""
+        tab = self.get_tab()
+        review = self.ss.is_curr(REVIEW_ST)
+        picked = self.win.pick_pos
+        if 0 <= picked < len(self.clues):
+            clue = self.clues[picked]
+            cat, ident = clue.cat, clue.ident
+        else:
+            cat, ident = '', ''
+
+
+        middle =  ''
+        if cat == 'param':
+            param_name, _, enums, regex = self._get_enums_regex()
+            if enums:
+                # middle += ' 🡄 🡆'⮕
+                # middle += '🠜🠞'
+                middle += '⮜–⮞'
+            if regex:
+                middle += ' [e]dit'
+            if not review and param_name:
+                middle += ' x:unmark' if self.hider.is_hidden_param(
+                            param_name) else ' x:mark'
+        if cat == 'warn' and review:
+            middle += ' x:unmark' if self.hider.is_hidden_warn(
+                        ident) else ' x:mark'
+
+        self.add_fancy_header(f'{left:<{tab.lwid}}  {middle}')
+
+    def add_home_head(self):
+        """ TBD"""
+        self.add_common_head1('EDIT')
+        tab = self.get_tab()
+
         # if any param is hidden on this screen, then show
-        # a second line
-        header = 's:hide' if self.show_hidden_params else '[s]how'
-        if self.hidden_stats.param:
-            header += f' {self.hidden_stats.param} ✘-params'
-        header = f'{header:<24}'
+        header, cnt = '', self.hidden_stats.param
+        if cnt:
+            header = 's:hide' if self.show_hidden_params else '[s]how'
+            header += f' {cnt} ✘-params'
+        header = f'{header:<{tab.lwid}}'
 
-        param_name, _, enums, regex = self._get_enums_regex()
-        if enums:
-            header += ' 🡄 🡆'
-        if regex:
-            header += ' [e]dit'
-        if param_name:
-            header += ' x:unmark' if self.hider.is_hidden_param(
-                        param_name) else ' x:mark'
-        header += f'   𝚫={len(self.get_diffs())}'
+        self.add_common_head2(header)
+        self.ensure_visible_group()
 
-
-        self.win.add_header(header)
-
-    def adjust_picked_pos(self):
-        """ This assumes:
-          - section names are singular or blank + section
-          - the 1st entry is a section name
-          - the last entry is NOT a section name
-        """
+    def ensure_visible_group(self):
+        """ TBD """
         win = self.win
         pos = win.pick_pos
+        group_cnt = 1
+        if 0 <= pos < len(self.clues):
+            group_cnt = self.clues[pos].group_cnt
+        over = pos - win.scroll_pos + group_cnt - win.scroll_view_size
+        if over >= 0:
+            win.scroll_pos += over + 1 # scroll back by number of out-of-view lines
+            self.next_prompt_seconds = [0.1, 0.1]
 
-        if not self.ss.is_curr(HOME_ST):
-            return pos
-
-        pos = max(min(len(self.seen_positions)-1, pos), 1)
-        if pos == win.pick_pos and pos == self.prev_pos:
-            return pos
-        up = bool(pos >= self.prev_pos)
-        ns = self.seen_positions[pos]
-        for _ in range(2):
-            keep_going = True
-            while ns.section_name and keep_going:
-                pos += 1 if up else -1
-                if 0 <= pos < len(self.seen_positions):
-                    ns = self.seen_positions[pos]
-                else:
-                    pos = min(max(0, pos), len(self.seen_positions)-1)
-                    while ns.section_name:
-                        pos += -1 if up else 1
-                        if 0 <= pos < len(self.seen_positions):
-                            ns = self.seen_positions[pos]
-                        else:
-                            pos = min(max(0, pos), len(self.seen_positions)-1)
-                            keep_going = False
-                            break 
-
-        win.pick_pos = pos
-        self.prev_pos = pos
-        return pos
 
     def adjust_picked_pos_w_clues(self):
         """ This assumes: the clues were created by the body.
         """
-        win = self.win # shorthand
-        pos = win.pick_pos
 
+        pos = self.win.pick_pos
         if not self.ss.is_curr((HOME_ST, REVIEW_ST)):
             return pos
         if not self.clues:
             return pos
 
         pos = max(min(len(self.clues)-1, pos), 0)
-        if pos == win.pick_pos and pos == self.prev_pos:
+        if pos == self.win.pick_pos and pos == self.prev_pos:
+            self.ensure_visible_group()
             return pos
         up = bool(pos >= self.prev_pos)
         for _ in range(2):
             clue = self.clues[pos]
             while clue.cat in ('nop', ):
-                if up:
-                    pos += 1
-                else:
-                    pos -= 1
+                pos += 1 if up else -1
                 if 0 <= pos < len(self.clues):
                     clue = self.clues[pos]
                 else:
@@ -498,49 +626,29 @@ class GrubWiz:
                     break
             up = bool(not up)
 
-        win.pick_pos = pos
+        self.win.pick_pos = pos
         self.prev_pos = pos
+        # now ensure the whole group is viewable
+        self.ensure_visible_group()
         return pos
 
-    def body_param_line(self, param_name, pos, picked, guided='Off'):
+    def body_param_lines(self, param_name, is_current):
         """ Build a body line for a param """
-        cfg = self.param_cfg[param_name]
-        enums = cfg.get('enums', [])
-        regex = cfg.get('regex', None)
+        tab = self.get_tab()
         marker = ' '
         if self.ss.is_curr(HOME_ST) and self.hider.is_hidden_param(param_name):
             marker = '✘'
-        keys = ''
-        if enums:
-            keys += ' [c]ycle'
-        if regex:
-            keys += ' [e]dit'
         value = self.param_values[param_name]
-        dots = '.' * (self.param_name_wid-len(param_name[5:])+3)
-        param_line = f'{marker} {param_name[5:]} {dots}  '
-        indent = len(param_line)
-        param_line += str(value)
-#       RETIRED SUPPORT FOR INLINE ENUMS
-#       if pos != picked:
-#           return param_line, keys, indent
-#       if guided != 'Off':
-#           more = ''
-#           if enums:
-#               sp = ''
-#               more += '   ◀' # going to add enums
-#               # more += '   CYCLE:' # going to add enums
-#               for choice in enums.keys():
-#                   if str(value) == str(choice):
-#                       more += f' ⏺'
-#                   elif len(str(choice)) > 0:
-#                       more += f' {choice}'
-#                   else:
-#                       more += f" ''"
-#               more += ' ▶'
-#           if regex and enums:
-#               more += ' or EDIT'
-#           param_line += more
-        return param_line, keys, indent
+        line = f'{marker} {param_name[5:]:·<{tab.lwid-2}}'
+        indent = len(line)
+        line += f'  {value}'
+        wid = self.win.cols - 1 # effective width
+        if len(line) > wid and is_current:
+            line = textwrap.fill(line, width=wid,
+                       subsequent_indent=' '*indent)
+        elif len(line) > wid and not is_current:
+            line = line [:self.win.cols-2] + '⯈'
+        return line.splitlines()
 
     def add_home_body(self):
         """ TBD """
@@ -548,9 +656,10 @@ class GrubWiz:
         win = self.win # short hand
         picked = win.pick_pos
         emits = []
-        view_size = win.scroll_view_size
+        #view_size = win.scroll_view_size
         found_current = False
         self.seen_positions = []
+        self.clues = []
         for ns in self.positions:
             self.hidden_stats.param += int(self.hider.is_hidden_param(ns.param_name))
             if (not ns.param_name or self.show_hidden_params
@@ -559,36 +668,39 @@ class GrubWiz:
         for pos, ns in enumerate(self.seen_positions):
             if ns.section_name == ' ':
                 win.add_body(f'{ns.section_name}')
+                self.clues.append(Clue('nop'))
                 continue
             if ns.section_name:
                 win.add_body(f'[{ns.section_name}]')
+                self.clues.append(Clue('nop'))
                 continue
 
             param_name = ns.param_name
-            param_line, _, indent = self.body_param_line(
-                            param_name, pos, picked, self.spins.guide)
-            if pos == picked:
-                found_current = True
+            is_current = bool(picked == pos)
+            param_lines = self.body_param_lines(param_name, is_current)
             if pos != picked:
-                win.add_body(param_line)
+                line = param_lines[0]
+                if len(param_lines) > 1:
+                    line = line[:self.win.cols-2] + '⯈'
+                win.add_body(line)
+                self.clues.append(Clue('param', 'param_name'))
                 continue
-            cfg = self.param_cfg[param_name]
-            value = self.param_values[param_name]
-            emits.append(param_line)
+            found_current = True
+            # cfg = self.param_cfg[param_name]
+            # value = self.param_values[param_name]
+            emits += param_lines
             
             emits += self.drop_down_lines(param_name)
 
             # truncate the lines to show to all that fit..
+            view_size = win.scroll_view_size
             if len(emits) > view_size:
                 hide_cnt = 1 + len(emits) - view_size
                 emits = emits[0:view_size-1]
                 emits.append(f'{lead}... beware: {hide_cnt} HIDDEN lines ...')
             for emit in emits:
                 win.add_body(emit)
-        # now ensure the whole block is viewable
-        over = picked - win.scroll_pos + len(emits) - view_size
-        if over > 0:
-            win.scroll_pos += over # scroll back by number of out-of-view lines
+            self.clues.append(Clue('param', 'param_name', len(emits)))
         return found_current
     
     def drop_down_lines(self, param_name):
@@ -600,11 +712,12 @@ class GrubWiz:
                 return []
             value = self.param_values[param_name]
             edit = ' or [e]dit' if cfg['edit_re'] else ''
-            wrapped = f': 🡄 🡆 {edit}:\n'
+            # wrapped = f': 🡄 🡆 {edit}:\n'
+            wrapped = f': ⮜–⮞ {edit}:\n'
             for enum, descr in cfg['enums'].items():
                 star = ' ⯀ ' if str(enum) == str(value) else ' 🞏 '
                 line = f' {star}{enum}: {descr}\n'
-                wrapped += textwrap.fill(line, width=wid, subsequent_indent=' '*5)
+                wrapped += textwrap.fill(line, width=wid-1, subsequent_indent=' '*5)
                 wrapped += '\n'
             return wrapped.split('\n')
         
@@ -627,7 +740,7 @@ class GrubWiz:
                 if line.strip() == '%ENUMS%':
                     wraps += gen_enum_lines()
                 else:
-                    wrapped = textwrap.fill(line, width=wid, subsequent_indent=' '*5)
+                    wrapped = textwrap.fill(line, width=wid-1, subsequent_indent=' '*5)
                     wraps += wrapped.split('\n')
         elif self.spins.guide == 'Enums':
             wraps += gen_enum_lines()
@@ -813,7 +926,6 @@ class GrubWiz:
     def main_loop(self):
         """ TBD """
         assert self.parsed.get_etc_default_grub()
-        seconds = 3.0
         
         self.setup_win()
         self.do_start_up_backup()
@@ -837,18 +949,20 @@ class GrubWiz:
 
             else: # HOME_ST screen
                 win.set_pick_mode(True)
-                if not self.add_home_body():
-                    seconds = 0.1 # not on current (so adjust quickly)
+                self.add_home_body()
                 self.add_home_head()
 
             win.render()
-            key = win.prompt(seconds=seconds)
-            seconds = 3.0
+            key = win.prompt(seconds=self.next_prompt_seconds[0])
+
+            self.next_prompt_seconds.pop(0)
+            if not self.next_prompt_seconds:
+                self.next_prompt_seconds = [3.0]
+
             if key is None:
-                if self.ss.is_curr(REVIEW_ST):
+                if self.ss.is_curr(REVIEW_ST
+                           ) or self.ss.is_curr(HOME_ST):
                     self.adjust_picked_pos_w_clues()
-                if self.ss.is_curr(HOME_ST):
-                    self.adjust_picked_pos()
 
             if key is not None:
                 self.spinner.do_key(key, win)
@@ -862,10 +976,10 @@ class GrubWiz:
                 name, _, enums, regex = '', None, {}, ''
                 if self.ss.is_curr((HOME_ST, REVIEW_ST)):
                     name, _, enums, regex = self._get_enums_regex()
-                if self.ss.act_in('escape'):
+                if self.ss.act_in('escape', (REVIEW_ST, RESTORE_ST)):
                     if self.ss.stack:
                         self.prev_pos = self.ss.pop()
-
+                        self.must_reviews = None  # Reset cached review data
                 if spins.help_mode:
                     spins.help_mode = True
                 if self.ss.act_in('help_mode', (HOME_ST, REVIEW_ST, RESTORE_ST)):
@@ -912,13 +1026,11 @@ class GrubWiz:
                         pos = self.win.pick_pos
                         if self.clues and 0 <= pos < len(self.clues):
                             clue = self.clues[pos]
-                            if clue.cat == 'issue':
+                            if clue.cat == 'warn':
                                 if self.hider.is_hidden_warn(clue.ident):
                                     self.hider.unhide_warn(clue.ident)
                                 else:
                                     self.hider.hide_warn(clue.ident)
-                        
-
                         
                 if self.ss.act_in('write', (HOME_ST, REVIEW_ST)):
                     if self.ss.is_curr(HOME_ST):
@@ -928,7 +1040,7 @@ class GrubWiz:
                     else: # REVIEW_ST
                         self.update_grub()
 
-                if self.ss.act_in('enter_restore', HOME_ST):
+                if self.ss.act_in('enter_restore', (HOME_ST, REVIEW_ST)):
                     self.prev_pos = self.ss.push(RESTORE_ST, self.prev_pos)
                     self.do_start_up_backup()
 
