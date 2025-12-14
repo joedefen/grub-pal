@@ -1,30 +1,6 @@
 #!/usr/bin/env python3
 """
-TODO:
- - clean up the Restore Screen ... add replace tag action.
- - implement reset config data?
- - replace [x] with underscored x in 
-
-
-Your feature set looks solid for v1.0! Here's my take: What you have is good:
-- ✅ RESTORE title
-- ✅ [t]ag for re-tagging
-- ✅ Auto .orig.bak on first start
-- ✅ Prompt to tag after unique writes
-- ✅ Detect unmatched configs on startup
-
-Nice-to-haves (consider for v1.0 or defer to v1.1):
-- Show which backup matches current config - Add a marker like ● or ⯀ next to the backup that matches what's currently in grub:
-  ● 20251211-211603-13C6E037.with-prober.bak  ← current
-    20251210-170809-F68D6B8C.custom.bak
-  This helps users know "where they are" without having to remember.
-- View backup contents - You mentioned read-only scrolled view. This is useful but probably v1.1 material. Users can always look at the files directly if desperate.
-- Confirmation on [r]estore - Do you already have "Are you sure?" for restore? That's pretty important since it overwrites current config.
-- Sort order - Looks like newest first? That's good.
-- My vote: Add the "current config" marker if easy, defer viewing contents to v1.1. Everything else looks complete for a solid v1.0!
-
-
- 
+    grub-wiz: the help grub file editor assistant
 """
 # pylint: disable=invalid_name,broad-exception-caught
 
@@ -48,8 +24,8 @@ from .GrubWriter import GrubWriter
 from .WizValidator import WizValidator
 from .ParamDiscovery import ParamDiscovery
 
-HOME_ST, REVIEW_ST, RESTORE_ST, HELP_ST = 0, 1, 2, 3  # screen numbers
-SCREENS = ('HOME', 'REVIEW', 'RESTORE', 'HELP') # screen names
+HOME_ST, REVIEW_ST, RESTORE_ST, VIEW_ST, HELP_ST = 0, 1, 2, 3, 4  # screen numbers
+SCREENS = ('HOME', 'REVIEW', 'RESTORE', 'VIEW', 'HELP') # screen names
 
 class Tab:
     """ TBD """
@@ -196,6 +172,9 @@ class GrubWiz:
         self.is_other_os = None # don't know yet
         self.show_hidden_params = False
         self.show_hidden_warns = False
+        self.grub_checksum = ''
+        self.bak_lines = None # the currently viewed .bak file
+        self.bak_path = None
         self._reinit()
         
     def _reinit(self):
@@ -277,6 +256,8 @@ class GrubWiz:
         spinner.add_key('enter_restore', 'R - enter restore screen', category='action')
         spinner.add_key('restore', 'r - restore selected backup [in restore screen]', category='action')
         spinner.add_key('delete', 'd - delete selected backup [in restore screen]', category='action')
+        spinner.add_key('tag', 't - tag/retag a backup file [in restore screen]', category='action')
+        spinner.add_key('view', 'v - view a backup file [in restore screen]', category='action')
         spinner.add_key('write', 'w,ENTER - write params and run "grub-update"',
                         category='action', keys=[ord('w'), 10, 13])
         spinner.add_key('escape', 'ESC - back to prev screen',
@@ -318,13 +299,31 @@ class GrubWiz:
 
     def add_restore_head(self):
         """ TBD """
-        header = '[d]elete [r]estore ?:help [q]uit'
+        header = 'RESTORE [d]elete [t]ag [r]estore [v]iew ESC:back ?:help [q]uit'
         self.add_fancy_header(header)
 
     def add_restore_body(self):
         """ TBD """
         for pair in self.ordered_backup_pairs:
-            self.win.add_body(pair[1].name)
+            prefix = '●' if pair[0] == self.grub_checksum else ' '
+            self.win.add_body(f'{prefix} {pair[1].name}')
+
+    def add_view_head(self):
+        """ TBD """
+        header = f'VIEW  {self.bak_path.name!r}  ESC:back ?:help [q]uit'
+        self.add_fancy_header(header)
+
+    def add_view_body(self):
+        """ TBD """
+        wid = self.win.cols - 7 # 4 num + SP before + 2SP after
+        for idx, line in enumerate(self.bak_lines):
+            self.win.add_body(f'{idx:>4}', attr=cs.A_BOLD)
+            self.win.add_body(f'  {line[:wid]}', resume=True)
+            line = line[wid:]
+            while line:
+                self.win.add_body(f'{' ':>6}{line[:wid]}')
+                line = line[wid:]
+
 
     def add_review_head(self):
         """ Construct the review screen header
@@ -505,19 +504,24 @@ class GrubWiz:
                 result_sections.append((key_char, key_attr))
                 i += 3  # Skip past [x]
 
-            # Check for x:text pattern (single letter/digit/? followed by colon)
-            elif (i + 1 < len(line) and line[i + 1] == ':' and
-                  (i == 0 or line[i - 1] == ' ') and
-                  (line[i].isalnum() or line[i] == '?')):  # Only valid key characters
-                # This looks like x:text - format the x
-                if current_text:
-                    result_sections.append((current_text, None))
-                    current_text = ""
+            # Check for multi-character key names like ESC:, ENTER:, TAB:
+            elif (i == 0 or line[i - 1] == ' '):
+                # Look ahead for uppercase word followed by colon
+                match = re.match(r'([A-Z]{2,}|[A-Z]):', line[i:])
+                if match:
+                    # Found a key name followed by colon
+                    if current_text:
+                        result_sections.append((current_text, None))
+                        current_text = ""
 
-                key_char = line[i]
-                result_sections.append((key_char, key_attr))
-                result_sections.append((':', None))  # Add the colon without formatting
-                i += 2
+                    key_name = match.group(1)
+                    result_sections.append((key_name, key_attr))
+                    result_sections.append((':', None))  # Add the colon without formatting
+                    i += len(key_name) + 1  # Skip past key and colon
+                else:
+                    # Not a key pattern, just regular character
+                    current_text += line[i]
+                    i += 1
 
             else:
                 # Regular character
@@ -537,7 +541,8 @@ class GrubWiz:
         """ TBD"""
         header = f'{title} '
         level = self.spins.guide
-        header += f' [g]uide={level} [w]rite [R]estore ?:help [q]uit'
+        esc = ' ESC:back' if self.ss.is_curr(REVIEW_ST) else ''
+        header += f' [g]uide={level} [w]rite [R]estore{esc} ?:help [q]uit'
         header += f'  𝚫={len(self.get_diffs())}'
         self.add_fancy_header(header)
         self.hider.write_if_dirty()
@@ -823,6 +828,22 @@ class GrubWiz:
         self.backups = self.backup_mgr.get_backups()
         self.ordered_backup_pairs = sorted(self.backups.items(),
                            key=lambda item: item[1], reverse=True)
+        
+    def request_backup_tag(self, prompt, seed='custom'):
+        """ Prompt user for a valid tag ... turn spaces into '-'
+         automatically """
+        regex = r'^[-_A-Za-z0-9]+$'
+        hint = f'regex={regex}'
+        while True:
+            answer = self.win.answer(esc_abort=True, seed=seed,
+                prompt=f"{prompt} [{hint}]]")
+            if answer is None:
+                return None
+            answer = answer.strip()
+            answer = re.sub(r'[-\s]+', '-', answer)
+            if re.match(regex, answer):
+                return answer
+
     def do_start_up_backup(self):
         """ On startup
             - install the "orig" backup of none
@@ -834,17 +855,10 @@ class GrubWiz:
             self.backup_mgr.create_backup('orig')
 
         elif checksum not in self.backups:
-            regex = r'^[-_A-Za-z0-9]+$'
-            hint = f'regex={regex}'
-            while True:
-                answer = self.win.answer(esc_abort=True, seed='custom',
-                    prompt=f"Enter a tag to back up {GRUB_DEFAULT_PATH} [{hint}]]")
-                if answer is None:
-                    break
-                answer = answer.strip()
-                if re.match(regex, answer):
-                    self.backup_mgr.create_backup(answer)
-                    break
+            answer = self.request_backup_tag(f'Enter a tag to back up {GRUB_DEFAULT_PATH}')
+            if answer:
+                self.backup_mgr.create_backup(answer)
+        self.grub_checksum = checksum # checksum of loaded grub
 
     def really_wanna(self, act):
         """ TBD """
@@ -888,7 +902,24 @@ class GrubWiz:
                 ok = False
         if ok:
             os.system('clear ; echo "OK ... newly installed" ;  cat /etc/default/grub')
-        input('\n\n===== Press ENTER to return to grub-wiz ====> ')
+            print('\n\nUpdate successful! Choose:')
+            print('  [r]eboot now')
+            print('  [p]oweroff')
+            print('  ENTER to return to grub-wiz')
+
+            choice = input('\n> ').strip().lower()
+
+            if choice == 'r':
+                print('\nRebooting...')
+                os.system('reboot')
+                sys.exit(0)  # Won't reach here, but just in case
+            elif choice == 'p':
+                print('\nPowering off...')
+                os.system('poweroff')
+                sys.exit(0)  # Won't reach here, but just in case
+            # Otherwise continue to grub-wiz
+        else:
+            input('\n\n===== Press ENTER to return to grub-wiz ====> ')
 
         self.win.start_curses()
         if ok:
@@ -930,6 +961,7 @@ class GrubWiz:
         self.setup_win()
         self.do_start_up_backup()
         win, spins = self.win, self.spins # shorthand
+        self.next_prompt_seconds = [0.1, 0.1]
         
         while True:
             if self.ss.is_curr(HELP_ST):
@@ -937,10 +969,15 @@ class GrubWiz:
                 self.spinner.show_help_nav_keys(win)
                 self.spinner.show_help_body(win)
 
+            elif self.ss.is_curr(VIEW_ST):
+                win.set_pick_mode(False)
+                self.add_view_body()
+                self.add_view_head()
+
             elif self.ss.is_curr(RESTORE_ST):
                 win.set_pick_mode(True)
-                self.add_restore_head()
                 self.add_restore_body()
+                self.add_restore_head()
 
             elif self.ss.is_curr(REVIEW_ST):
                 win.set_pick_mode(True)
@@ -976,10 +1013,11 @@ class GrubWiz:
                 name, _, enums, regex = '', None, {}, ''
                 if self.ss.is_curr((HOME_ST, REVIEW_ST)):
                     name, _, enums, regex = self._get_enums_regex()
-                if self.ss.act_in('escape', (REVIEW_ST, RESTORE_ST)):
+                if self.ss.act_in('escape', (REVIEW_ST, RESTORE_ST, VIEW_ST)):
                     if self.ss.stack:
                         self.prev_pos = self.ss.pop()
                         self.must_reviews = None  # Reset cached review data
+                        self.bak_lines, self.bak_path = None, None
                 if spins.help_mode:
                     spins.help_mode = True
                 if self.ss.act_in('help_mode', (HOME_ST, REVIEW_ST, RESTORE_ST)):
@@ -1061,10 +1099,41 @@ class GrubWiz:
                     idx = self.win.pick_pos
                     if 0 <= idx < len(self.ordered_backup_pairs):
                         doomed = self.ordered_backup_pairs[idx][1]
-                        if self.really_wanna(f'remove {doomed.name!r}'):
-                            os.unlink(doomed)
+                        if self.really_wanna(f'remove {doomed!r}'):
+                            try:
+                                os.unlink(doomed.name)
+                            except Exception as exce:
+                                self.win.alert(
+                                    message=f'ERR: unlink({doomed.name}) [{exce}]')
                             self.refresh_backup_list()
 
+                if self.ss.act_in('tag', RESTORE_ST):
+                    idx = self.win.pick_pos
+                    if 0 <= idx < len(self.ordered_backup_pairs):
+                        chosen = self.ordered_backup_pairs[idx][1]
+                        tag = self.request_backup_tag(f'Enter tag for {chosen.name}',
+                                                      seed='')
+                        if tag:
+                            new_name = re.sub(r'[^.]+\.bak$', f'{tag}.bak', chosen.name)
+                            new_path = chosen.parent / new_name
+                            if new_path != chosen:
+                                try:
+                                    os.rename(chosen, new_path)
+                                except Exception as exce:
+                                    self.win.alert(
+                                        message=f'ERR: rename({chosen.name}, {new_path.name}) [{exce}]')
+                            self.refresh_backup_list()
+
+                if self.ss.act_in('view', RESTORE_ST):
+                    idx = self.win.pick_pos
+                    if 0 <= idx < len(self.ordered_backup_pairs):
+                        try:
+                            self.bak_path = self.ordered_backup_pairs[idx][1]
+                            self.bak_lines = self.bak_path.read_text().splitlines()
+                            assert isinstance(self.bak_lines, list)
+                            self.prev_pos = self.ss.push(VIEW_ST, self.prev_pos)
+                        except Exception as ex:
+                            self.win.alert(f'ERR: cannot slurp {self.bak_path} [{ex}]')
 
             win.clear()
 
@@ -1083,6 +1152,8 @@ def main():
     parser.add_argument('--discovery', '--parameter-discovery', default=None,
                         choices=('enable', 'disable', 'show'),
                         help='control/show parameter discovery state')
+    parser.add_argument('--factory-reset', action='store_true',
+                        help='restore out-of-box experience (but keeping .bak files)')
     parser.add_argument('--validator-demo', action='store_true',
                         help='for test only: run validator demo')
     opts = parser.parse_args()
@@ -1091,6 +1162,7 @@ def main():
     if opts.validator_demo:
         wiz.wiz_validator.demo(wiz.param_defaults)
         sys.exit(0)
+
     if opts.discovery is not None:
         if opts.discovery in ('enable', 'disable'):
             enabled = wiz.param_discovery.manual_enable(opts.paramd == 'enable')
@@ -1101,8 +1173,25 @@ def main():
             print(f'\nPruned {absent_params=}')
         sys.exit(0)
 
+    if opts.factory_reset:
+        print('Factory reset: clearing user preferences...')
+        deleted = []
+        try:
+            for target in (wiz.param_discovery.cache_file,
+                            wiz.hider.yaml_path):
+                if os.path.isfile(target):
+                    os.unlink(target)
+                    deleted.append(str(target))
+            if deleted:
+                print(f'Deleted: {", ".join(deleted)}')
+            else:
+                print('No cached files to delete.')
+            print('Factory reset complete. Backup files (.bak) preserved.')
+        except Exception as whynot:
+            print(f'ERR: failed "factory reset" [{whynot}]')
+        sys.exit(0)
 
-            
+
 
     time.sleep(1.0)
     wiz.main_loop()

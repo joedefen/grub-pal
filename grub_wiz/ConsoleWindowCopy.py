@@ -1243,48 +1243,110 @@ class ConsoleWindow:
         time.sleep(duration)
 
 
-    def alert(self, title='ALERT', message='', height=1, width=80):
+    def alert(self, message='', title='ALERT', _height=None, _width=None):
         """
         Displays a blocking, modal alert box with a title and message.
+        Auto-sizes based on content and terminal size with 1-cell border.
 
         Waits for the user to press **ENTER** to acknowledge and dismiss the box.
 
-        :param title: The title text for the alert box.
         :param message: The message body content.
-        :param height: The height of the message area (number of lines).
-        :param width: The visible width of the message area.
+        :param title: The title text for the alert box (defaults to 'ALERT')
+        :param height: DEPRECATED - ignored
+        :param width: DEPRECATED - ignored
         :type title: str
         :type message: str
-        :type height: int
-        :type width: int
         """
         def mod_key(key):
             """Internal function to map Enter/Key_Enter to an arbitrary key code 7 for Textbox.edit to exit."""
             return  7 if key in (10, curses.KEY_ENTER) else key
 
-        if self.rows < 2+height or self.cols < 30:
-            return
-        width = min(width, self.cols-3) # max text width
-        row0 = (self.rows+height-1)//2 - 1
-        row9 = row0 + height + 1
-        col0 = (self.cols - (width+2)) // 2
-        col9 = col0 + width + 2 - 1
+        # Auto-calculate dimensions with 1-cell border on all sides
+        # Leave 1 cell on each side for reverse video border
+        max_box_width = self.cols - 2  # 1 cell left, 1 cell right
+        max_box_height = self.rows - 2  # 1 cell top, 1 cell bottom
 
+        if max_box_width < 20 or max_box_height < 5:
+            return  # Terminal too small
+
+        # Calculate content width (box interior minus borders)
+        content_width = max_box_width - 2  # Subtract box borders
+
+        # Determine if title fits on box border, or needs to go inside
+        footer_text = 'Press ENTER to ack'
+        title_available_width = content_width - len(footer_text) - 2
+
+        lines = []
+        if len(title) > title_available_width:
+            # Title too long - use "alert" as box title, put real title inside
+            box_title = 'alert'
+            # Wrap the actual title
+            title_lines = textwrap.wrap(title, width=content_width)
+            lines.extend(title_lines)
+            lines.append('')  # Blank line separator
+        else:
+            # Title fits on box border
+            box_title = title
+
+        # Wrap message content
+        if message:
+            message_lines = textwrap.wrap(message, width=content_width)
+            lines.extend(message_lines)
+
+        # Calculate box dimensions - use full height with 1-cell border
+        content_height = len(lines)
+        box_height = max_box_height  # Use full available height
+
+        # Calculate box position - 1 cell border on all sides
+        row0 = 1  # 1 cell from top
+        row9 = self.rows - 2  # 1 cell from bottom
+        col0 = 1  # 1 cell from left
+        col9 = self.cols - 2  # 1 cell from right
+
+        # Clear screen normally (no reverse video)
         self.scr.clear()
-        for row in range(self.rows):
-            self.scr.insstr(row, 0, ' '*self.cols, curses.A_REVERSE)
-        pad = curses.newpad(20, 200)
-        win = curses.newwin(1, 1, row9-1, col9-2) # input window (dummy for Textbox)
-        rectangle(self.scr, row0, col0, row9, col9)
-        self.scr.addstr(row0, col0+1, title[0:width], curses.A_REVERSE)
-        pad.addstr(message)
-        ending = 'Press ENTER to ack'[:width]
-        self.scr.addstr(row9, col0+1+width-len(ending), ending)
-        self.scr.refresh()
-        pad.refresh(0, 0, row0+1, col0+1, row9-1, col9-1)
 
-        # Use a dummy Textbox with a dummy window to block until Enter is pressed
-        curses.curs_set(0) # ensure cursor is off
+        # Draw 1-cell reverse video border around the box area
+        # Top and bottom borders (full width)
+        self.scr.insstr(0, 0, ' '*self.cols, curses.A_REVERSE)
+        self.scr.insstr(self.rows-1, 0, ' '*self.cols, curses.A_REVERSE)
+        # Left and right borders
+        for row in range(1, self.rows-1):
+            self.scr.addch(row, 0, ' ', curses.A_REVERSE)
+            self.scr.addch(row, self.cols-1, ' ', curses.A_REVERSE)
+
+        # Draw box
+        rectangle(self.scr, row0, col0, row9, col9)
+
+        # Fill box interior with normal background (to override any reverse video)
+        for row in range(row0+1, row9):
+            self.scr.addstr(row, col0+1, ' '*(col9-col0-1))
+
+        # Add title on top border
+        self.scr.addstr(row0, col0+1, box_title[:content_width], curses.A_REVERSE)
+
+        # Add footer on bottom border
+        footer_pos = col0 + 1 + content_width - len(footer_text)
+        self.scr.addstr(row9, footer_pos, footer_text[:content_width])
+
+        # Create pad for scrollable content
+        pad = curses.newpad(max(content_height, 1), content_width + 1)
+
+        # Add lines to pad
+        for idx, line in enumerate(lines):
+            if idx < content_height:
+                pad.addstr(idx, 0, line[:content_width])
+
+        # Refresh screen
+        self.scr.refresh()
+
+        # Display content (scrollable if needed)
+        visible_rows = box_height - 2  # Subtract top and bottom borders
+        pad.refresh(0, 0, row0+1, col0+1, row0+visible_rows, col9-1)
+
+        # Wait for ENTER using dummy Textbox
+        win = curses.newwin(1, 1, row9-1, col9-2)
+        curses.curs_set(0)  # Ensure cursor is off
         Textbox(win).edit(mod_key).strip()
         return
 
