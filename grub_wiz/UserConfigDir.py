@@ -4,6 +4,7 @@ Singleton class for managing user configuration directory and file ownership.
 Handles the common case of scripts running as root but needing to store files
 in the real user's home directory.
 """
+# pylint: disable=broad-exception-caught,invalid-name
 
 import os
 import sys

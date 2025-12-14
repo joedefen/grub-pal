@@ -224,13 +224,13 @@ class GrubWriter:
 if __name__ == '__main__':
     print("--- Example: GRUB Configuration Writer ---")
     print("This requires root privileges and installed GRUB utilities to run successfully.")
-    
+
     # Example of valid content
     valid_content = "GRUB_TIMEOUT=5\nGRUB_DEFAULT=0\nGRUB_CMDLINE_LINUX_DEFAULT=\"quiet splash\"\n"
-    
+
     # Simulate commit to a non-critical file for testing (still needs root for permissions checks)
     # Note: If grub-mkconfig is found, it will try to write to /boot/grub/grub.cfg which needs root.
-    
+
     # 1. Create a GrubWriter instance
     # writer = GrubWriter()
 

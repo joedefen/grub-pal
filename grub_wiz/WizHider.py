@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Set, Dict, Any, Optional
 from ruamel.yaml import YAML, YAMLError
 
+
 from .UserConfigDir import get_user_config_dir
 
 yaml = YAML()
@@ -134,7 +135,7 @@ class WizHider:
         if composite_id in self.warns:
             self.warns.remove(composite_id)
             self.dirty_count += 1
-            
+
     def purge_orphan_keys(self, all_warn_keys: set):
         """ Remove any keys no longer of valid """
         for key in self.warns:

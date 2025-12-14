@@ -47,7 +47,7 @@ Running `grub-wiz` brings a screen similar to:
  [s]how 18 ✘-params          ⮜–⮞ [e]dit x:mark
 ──────────────────────────────────────────────────────────────────────
  [Boot Timeout]
->  TIMEOUT·················  2                                        
+>  TIMEOUT·················  2
 
  [Menu Entries]
    DEFAULT·················  0
@@ -78,7 +78,7 @@ The next step in updating the `grub` configuration is the REVIEW screen:
  REVIEW  [g]uide=Off [w]rite [R]estore ESC:back ?:help [q]uit  𝚫=1
                              ⮜–⮞ [e]dit
 ──────────────────────────────────────────────────────────────────────
->  TIMEOUT·················  22003                                    
+>  TIMEOUT·················  22003
                         was  2
                           *  over 60s seems ill advised
    DISABLE_OS_PROBER·······  false
@@ -95,7 +95,7 @@ NOTES:
 ##### GUIDANCE LEVELS
 Typing `g` on the EDIT and REVIEW screens cycles through its possible values, None, Enums, and Full.  Full guidance for the `TIMEOUT` parameter would look like:
 ```
->  DISABLE_OS_PROBER·······  false                                    
+>  DISABLE_OS_PROBER·······  false
                           *  perhaps set "true" since no multi-boot d▶
      Setting to 'true' prevents GRUB from automatically scanning other
           partitions for installed operating systems (like Windows,
@@ -111,7 +111,7 @@ When you enter the restore screen by typing `R` from the EDIT or REVIEW screen, 
 ```
  RESTORE [d]elete [t]ag [r]estore [v]iew ESC:back ?:help [q]uit
 ──────────────────────────────────────────────────────────────────────
->● 20251211-211603-13C6E037.with-prober.bak                           
+>● 20251211-211603-13C6E037.with-prober.bak
    20251210-170809-F68D6B8C.custom.bak
    20251210-003216-BC58FF3D.orig.bak
 ```
@@ -125,7 +125,7 @@ When you enter the restore screen by typing `R` from the EDIT or REVIEW screen, 
  - tags must be word/phase-like strings with only [-_A-Za-z0-9] characters (spaces will be converted to "-" characters)
  - the `[R]estore` menu item brings up the RESTORE screen which lists backups; you can delete, restore, and view backups
  - if a backup is restored, `grub-wiz` re-initializes using restored grub file and returns to main screen
- 
+
 #### Parameter Discovery
 Because GRUB can vary per system, `grub-wiz` uses `info -f grub -n "Simple Configuration"` to discover which parameters are actually supported. Parameters not found on your system are automatically removed by `grub-wiz` from its screens. Notes:
 - We recommend installing GRUB documentation for best results:
@@ -233,10 +233,10 @@ overrides:
       3: short (my preference)
       10: normal (my preference)
       30: long (my preference)
-  
+
   GRUB_GFXMODE:
     hide: False  # Make visible by default (was True in canned)
-    
+
   GRUB_CMDLINE_LINUX:
     guidance: "Custom help text for my specific use case..."
 

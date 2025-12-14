@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+""" TBD"""
+# pylint: disable=line-too-long,invalid-name,broad-exception-caught
 import os
 import sys
 import shutil
@@ -40,15 +42,15 @@ class BackupMgr:
     # (Leaving these out for brevity in the response, but they are included in the full file block)
 
     def calc_checksum(self, source: Union[Path, str]) -> str:
-        # ... (implementation from previous response) ...
+        """ TBD """
         content = b''
-        
+
         if isinstance(source, Path):
             if not source.exists():
                 return ""
             try:
                 content = source.read_bytes()
-            except Exception as e:
+            except Exception:
                 # print(f"Error reading file {source} for checksum: {e}", file=sys.stderr)
                 return ""
         elif isinstance(source, str):
@@ -60,6 +62,7 @@ class BackupMgr:
 
 
     def get_backups(self) -> Dict[str, Path]:
+        """ TBD """
         backups: Dict[str, Path] = {}
         for file_path in self.config_dir.iterdir():
             match = BACKUP_FILENAME_PATTERN.search(file_path.name)
@@ -69,8 +72,9 @@ class BackupMgr:
         return backups
 
     def restore_backup(self, backup_file: Path, dest_path: Optional[Path] = None) -> bool:
+        """ TBD """
         destination = dest_path if dest_path is not None else self.target_path
-        
+
         if os.geteuid() != 0:
             print(f"Error: Root permissions required to write to {destination}.", file=sys.stderr)
             return False
@@ -100,16 +104,16 @@ class BackupMgr:
         if not target.exists():
             print(f"Error: Target file {target} does not exist. Skipping backup.", file=sys.stderr)
             return None
-        
+
         current_checksum = checksum if checksum else self.calc_checksum(target)
         if not current_checksum:
-            return None 
+            return None
 
         existing_backups = self.get_backups()
         if current_checksum in existing_backups:
             print(f"Info: File is identical to existing backup: {existing_backups[current_checksum].name}. Skipping new backup.")
             return existing_backups[current_checksum]
-        
+
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         new_filename = f"{timestamp}-{current_checksum}.{tag}.bak"
         new_backup_path = self.config_dir / new_filename

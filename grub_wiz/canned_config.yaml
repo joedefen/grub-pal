@@ -7,7 +7,7 @@
 #         - value: meaning
 #       guidance: {text} # < detailed parameter help
 #       hide: {False|True}
-# 
+#
 Boot Timeout:
   GRUB_TIMEOUT:
     default: 5

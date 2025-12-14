@@ -5,17 +5,18 @@ the installed GRUB documentation (info pages).
 
 Results are cached in ~/.config/grub-wiz/system-params.yaml for performance.
 """
+# pylint: disable=broad-exception-caught,
 
 import re
+import argparse
 import subprocess
 import time
-from pathlib import Path
 from typing import Optional, Set
 from ruamel.yaml import YAML
 
 try:
     from .UserConfigDir import get_user_config_dir
-except:
+except Exception:
     from UserConfigDir import get_user_config_dir
 
 yaml = YAML()
@@ -120,10 +121,9 @@ class ParamDiscovery:
             # Determine status based on parsing results
             if len(params) > 0:
                 return params, STATE_OK
-            else:
-                # Info ran but we couldn't parse any parameters
-                print("Warning: Could not parse any parameters from info output")
-                return params, STATE_CANNOT_PARSE
+            # Info ran but we couldn't parse any parameters
+            print("Warning: Could not parse any parameters from info output")
+            return params, STATE_CANNOT_PARSE
 
         except subprocess.TimeoutExpired:
             print("Warning: info command timed out")
@@ -334,10 +334,10 @@ class ParamDiscovery:
                 print()
 
             if missing:
-                print_set(f"Missing (known but not found)", '-', missing)
+                print_set("Missing (known but not found)", '-', missing)
 
             if extra:
-                print_set(f'Extra (found but unknown)', '+', extra)
+                print_set('Extra (found but unknown)', '+', extra)
 
             if expected:
                 print_set("✓ Perfect match", '=', expected)
@@ -386,7 +386,6 @@ class ParamDiscovery:
 
 def main():
     """CLI entry point for standalone testing"""
-    import argparse
 
     parser = argparse.ArgumentParser(
         description='Discover GRUB parameters supported on this system'

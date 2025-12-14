@@ -9,6 +9,7 @@ from typing import Tuple, Optional
 from copy import deepcopy
 # pylint: disable=line-too-long,invalid-name,too-many-locals
 # pylint: disable=too-many-branches,too-many-statements
+# pylint: disable=too-many-nested-blocks
 
 
 class WizValidator:
@@ -410,7 +411,7 @@ class WizValidator:
             if not warnings:
                 print('  (no warnings)')
             else:
-                for param, pairs in warnings.items():
+                for param, pairs in warnings:
                     for pair in pairs:
                         print(f'{param:>30} {pair[0]:>4} {pair[1]}')
 

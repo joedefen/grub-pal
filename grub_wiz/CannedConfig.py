@@ -13,12 +13,12 @@ class CannedConfig:
     def __init__(self):
         # 1. Get a Traversable object for the 'grub_wiz' package directory
         resource_path = files('grub_wiz') / 'canned_config.yaml'
-        
+
         # 2. Open the file resource for reading
         # We use resource_path.read_text() to get the content as a string
         yaml_string = resource_path.read_text()
         self.data = yaml.load(yaml_string)
-        
+
     def dump(self):
       """ Dump the wired/initial configuration"""
       string = yaml.dump(self.data)
@@ -26,8 +26,8 @@ class CannedConfig:
 
 def main():
     """ TBD """
-    string = yaml.dump(config_data)
-    print(string)
+    cfg = CannedConfig()
+    cfg.dump()
 
 if __name__ == '__main__':
     main()
