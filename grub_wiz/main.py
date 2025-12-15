@@ -408,10 +408,8 @@ class GrubWiz:
                         other_name = f'GRUB_{word}'
                     elif word not in self.param_values:
                         continue
-                    if other_name not in self.must_reviews:
-                        self.must_reviews.append(other_name)
-                if param_name not in self.must_reviews:
-                    self.must_reviews.add(param_name)
+                    self.must_reviews.add(other_name)
+                self.must_reviews.add(param_name)
 
         for param_name in self.param_names:
             if param_name not in self.must_reviews:

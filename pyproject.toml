@@ -4,7 +4,7 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "grub-wiz"
-version = "1.0.1"
+version = "0.0.2"
 readme = "README.md"
 description = "Grub config assistant"
 authors = [
@@ -32,5 +32,5 @@ classifiers = [
 text = "MIT"
 
 [project.scripts]
-grub-wiz = "grub-wiz.grub-wiz:main"
+grub-wiz = "grub_wiz.main:main"
 
