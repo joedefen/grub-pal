@@ -8,11 +8,12 @@ yaml = YAML()
 yaml.preserve_quotes = True
 yaml.default_flow_style = False
 
+EXPERT_EDIT = '>>EXPERT_EDIT<<', # not a regex (SPECIAL MEANING)
 class CannedConfig:
     """ TBD"""
     default_cfg = {  # config schema for a single parameter
         'default': '',  # usually string, can be integer
-        'edit_re': '>>EXPERT_EDIT<<', # not a regex (SPECIAL MEANING)
+        'edit_re': EXPERT_EDIT,
         'enums': {},  # key: enum name, value enum description
         'guidance': '',  # often lengthy, may have embedded newlines
         'hide': False,  # deprecated

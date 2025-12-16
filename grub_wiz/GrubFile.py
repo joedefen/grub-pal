@@ -29,8 +29,10 @@ from typing import List, Dict, Optional, Any #, Union
 from types import SimpleNamespace
 try:
     from .CannedConfig import CannedConfig
+    from .ParamDiscovery import ParamDiscovery
 except Exception:
     from CannedConfig import CannedConfig
+    from ParamDiscovery import ParamDiscovery
 
 
 class GrubFile:
@@ -56,6 +58,7 @@ class GrubFile:
         self.param_data: Dict[str, Dict[str, Any]] = {}
         # Unvalidated params discovered in grub file
         self.extra_params: Dict[str, Dict[str, Any]] = {}
+        self.discovery = ParamDiscovery.get_singleton()
 
         self.read_file()
 
@@ -139,7 +142,7 @@ class GrubFile:
             if not line:
                 continue
 
-            mat = re.match(r"\s*(#)?\s*(GRUB_[A-Z]+(_[A-Z]+)*)\s*=(.*)$", line)
+            mat = re.match(r"\s*(#)?\s*(GRUB(_[A-Z]+)+)\s*=(.*)$", line)
             if not mat:
                 continue # not a line with a parameter (commented out or not)
 
@@ -148,6 +151,8 @@ class GrubFile:
             value_part = mat.group(4)
 
             if param not in self.supported_params:
+                if self.discovery.get_absent([param]):
+                    continue  # looks like a param but not on this system
                 # Unvalidated parameter - adopt it with minimal config
                 if param not in self.extra_params:
                     # Collect guidance from comment lines above
@@ -158,8 +163,6 @@ class GrubFile:
                     param_cfg = CannedConfig.default_cfg.copy()
                     param_cfg['default'] = value
                     param_cfg['guidance'] = guidance
-                 #  param_cfg['edit_re'] = '.*'  # Permissive regex for unvalidated params
-                 #  param_cfg['enums'] = None
 
                     # Add to extra_params and supported_params
                     self.extra_params[param] = param_cfg

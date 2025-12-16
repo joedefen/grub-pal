@@ -37,19 +37,34 @@ ABSENT_THRESHOLD = 0.20
 
 class ParamDiscovery:
     """Discovers and caches system-supported GRUB parameters"""
+    singleton = None
 
     def __init__(self, user_config=None):
         """
         Args:
             user_config: UserConfigDir instance (uses singleton if not provided)
         """
+        if ParamDiscovery.singleton:
+            raise RuntimeError("ParamDiscovery is a singleton. Use get_singleton() instead.")
+        ParamDiscovery.singleton = self
+        
         self.user_config = user_config if user_config else get_user_config_dir("grub-wiz")
         self.config_dir = self.user_config.config_dir
         self.cache_file = self.config_dir / 'system-params.yaml'
+        self.cached_data = None
+        self._manual_disabled = False
 
-        # Load state from cache
-        cached_data = self.load_cached_data()
-        self._manual_disabled = cached_data['manual_disabled'] if cached_data else False
+        # all member vars inited ... do dynamic init...
+        self.cached_data = self.load_cached_data()
+        self._manual_disabled = self.cached_data['manual_disabled'] if self.cached_data else False        
+
+    @staticmethod
+    def get_singleton(user_config=None):
+        """ Gets the singleton object ... do not use constructor directly.
+        """
+        if not ParamDiscovery.singleton:
+            ParamDiscovery(user_config=user_config)
+        return ParamDiscovery.singleton
 
     def manual_enable(self, state: Optional[bool] = None) -> bool:
         """
@@ -172,6 +187,8 @@ class ParamDiscovery:
             Dictionary with 'params', 'state', 'timestamp', and 'manual_disabled',
             or None if cache doesn't exist
         """
+        if self.cached_data:
+            return self.cached_data
         if not self.cache_file.exists():
             return None
 
@@ -191,12 +208,13 @@ class ParamDiscovery:
             params = set(data.get('discovered_params', []))
             manual_disabled = data.get('manual_disabled', False)
 
-            return {
+            self.cached_data = {
                 'params': params,
                 'state': state,
                 'timestamp': timestamp,
                 'manual_disabled': manual_disabled
             }
+            return self.cached_data
         except Exception as e:
             print(f"Warning: Failed to load cache file: {e}")
             return None
@@ -350,6 +368,8 @@ class ParamDiscovery:
         - Discovery is manually enabled
         - Discovery state is OK
         - Less than 20% of params are absent (validates probe quality)
+          ONLY IF the given number of probes is > 1 (so you can do single
+          param probes w/o being dismissed for being incomplete)
 
         Args:
             param_list: List of parameter names to check
@@ -375,7 +395,8 @@ class ParamDiscovery:
         absent = param_set - params
 
         # Validate probe quality: no more than 20% absent
-        if len(param_set) > 0:
+        # (unless single param probe)
+        if len(param_list) > 1 and len(param_set) > 0:
             absent_ratio = len(absent) / len(param_set)
             if absent_ratio > ABSENT_THRESHOLD:
                 # Probe results seem unreliable
@@ -414,7 +435,7 @@ def main():
     args = parser.parse_args()
 
     # Initialize discovery
-    discovery = ParamDiscovery()
+    discovery = ParamDiscovery.get_singleton()
 
     # Handle enable/disable
     if args.disable:

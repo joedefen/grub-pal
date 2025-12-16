@@ -220,7 +220,7 @@ class GrubWiz:
         self.backup_mgr = BackupMgr()
         self.hider = None
         self.grub_writer = GrubWriter()
-        self.param_discovery = ParamDiscovery()
+        self.param_discovery = ParamDiscovery.get_singleton()
         self.wiz_validator = None
         self.backups = None
         self.ordered_backup_pairs = None
@@ -253,7 +253,9 @@ class GrubWiz:
         absent_param_names = set(self.param_discovery.get_absent(names))
         self.defined_param_names = names
 
-        for idx, (section, params) in enumerate(self.sections.items()):
+        # -----------------------
+        def setup_section(idx, section, params):
+            nonlocal self
             if idx > 0: # blank line before sections except 1st
                 self.positions.append( SimpleNamespace(
                     param_name=None, section_name=' '))
@@ -267,12 +269,23 @@ class GrubWiz:
                     param_name=param_name, section_name=None))
                 self.param_defaults[param_name
                             ] = self.param_cfg[param_name]['default']
-        self.param_names = list(self.param_cfg.keys())
+        # -----------------------
+
+        for idx, (section, params) in enumerate(self.sections.items()):
+            setup_section(idx, section, params)
         if self.wiz_validator is None:
             self.wiz_validator = WizValidator(self.param_cfg)
 
         self.grub_file = GrubFile(supported_params=self.param_cfg)
         self.grub_file.read_file()
+        if self.grub_file.extra_params:
+            section_name = 'Unvalidated Params'
+            extras = {}
+            for extra, cfg in self.grub_file.extra_params.items():
+                extras[extra] = cfg
+            self.sections[section_name] = extras
+            setup_section(len(self.sections)-1, section_name, extras)
+        self.param_names = list(self.param_cfg.keys())
         self.prev_pos = -1024  # to detect direction
 
         name_wid = 0

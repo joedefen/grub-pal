@@ -36,7 +36,7 @@ Boot Timeout:
 
   GRUB_HIDDEN_TIMEOUT:
     default: ''
-    edit_re: ^(\d+|$)$
+    edit_re: ^(\d+)?$
     enums:
       '': Not set (disabled).
       0: No hidden timeout - show menu immediately.
@@ -63,7 +63,7 @@ Boot Timeout:
 Menu Entries:
   GRUB_DEFAULT:
     default: 0
-    edit_re: ^\d+$|^saved$|^".*"$|^'.*'$
+    edit_re: ^(\d+|saved|".*"|'.*')$
     enums:
       0: Boot first menu entry (usually the latest OS).
       saved: Boot previously booted OS (ensure SAVEDEFAULT is true)
@@ -140,7 +140,7 @@ Kernel Arguments:
 
   GRUB_CMDLINE_LINUX_RECOVERY:
     default: ''
-    edit_re: ^".*"$|^$
+    edit_re: ^(".*")?$
     enums: {}
     guidance: "Kernel arguments specifically for recovery mode boots.
       \n: If empty, uses GRUB_CMDLINE_LINUX.
@@ -159,7 +159,7 @@ Visual Appearance:
 
   GRUB_BACKGROUND:
     default: ''
-    edit_re: (?i)^/.*(\.png|\.jpg|\.jpeg)$|^$
+    edit_re: (?i)^(/.*(\.png|\.jpg|\.jpeg))?$
     enums: {}
     guidance: "Full path and filename to a background image.
       \n: Must be a JPEG or PNG file path.
@@ -169,7 +169,7 @@ Visual Appearance:
 
   GRUB_THEME:
     default: ''
-    edit_re: (?i)^/.*theme\.txt$|^$
+    edit_re: (?i)^(/.*theme\.txt)?$
     enums: {}
     guidance: "Path to the theme.txt file for a custom GRUB theme.
       \n: This overrides the background image setting (GRUB_BACKGROUND)."
@@ -218,7 +218,7 @@ Visual Appearance:
 
   GRUB_INIT_TUNE:
     default: ''
-    edit_re: ^".*"$|^$
+    edit_re: ^(".*")?$
     enums:
       '': No beep (silent).
       '"480 440 1"': Single beep (A note).
@@ -317,7 +317,7 @@ Security & Advanced:
 
   GRUB_PRELOAD_MODULES:
     default: ''
-    edit_re: ^".*"$|^$
+    edit_re: ^(".*")?$
     enums: {}
     guidance: "Space-separated list of GRUB modules to load early.
       \n: Example: \"lvm mdraid1x\" for LVM/RAID support.
@@ -326,7 +326,7 @@ Security & Advanced:
 
   GRUB_BADRAM:
     default: ''
-    edit_re: ^".*"$|^$
+    edit_re: ^(".*")?$
     enums: {}
     guidance: "Memory address ranges to exclude from use (faulty RAM workaround).
       \n: Format: \"0xStartAddr,0xMask,0xStartAddr,0xMask,...\"
