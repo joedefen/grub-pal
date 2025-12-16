@@ -163,6 +163,99 @@ class Clue:
         attrs = [f"{k}={v!r}" for k, v in self.__dict__.items()]
         return f"Clue({', '.join(attrs)})"
 
+class Screen:
+    """Base class for all screen types"""
+    def __init__(self, grub_wiz):
+        self.gw = grub_wiz  # Reference to main GrubWiz instance
+        self.win = grub_wiz.win
+
+    def draw_header(self):
+        """Draw screen-specific header - override in subclasses"""
+        pass
+
+    def draw_body(self):
+        """Draw screen-specific body - override in subclasses"""
+        pass
+
+    def handle_action(self, action_name):
+        """
+        Dispatch action to screen-specific handler method.
+        Looks for method named '{action_name}_action' and calls it if exists.
+        Returns True if action was handled, False otherwise.
+        """
+        method_name = f'{action_name}_action'
+        method = getattr(self, method_name, None)
+        if method and callable(method):
+            method()
+            return True
+        return False
+
+
+class HomeScreen(Screen):
+    """HOME screen - parameter editing"""
+    def draw_header(self):
+        self.gw.add_home_head()
+
+    def draw_body(self):
+        return self.gw.add_home_body()
+
+    def hide_action(self):
+        """Handle 'x' key on HOME screen - toggle param activation"""
+        name, _, _, _, _ = self.gw._get_enums_regex()
+        if name:
+            if self.gw.is_active_param(name):
+                self.gw.deactivate_param(name)
+            else:
+                self.gw.activate_param(name)
+
+
+class ReviewScreen(Screen):
+    """REVIEW screen - show diffs and warnings"""
+    def draw_header(self):
+        self.gw.add_review_head()
+
+    def draw_body(self):
+        self.gw.add_review_body()
+
+    def hide_action(self):
+        """Handle 'x' key on REVIEW screen - toggle warning suppression"""
+        pos = self.win.pick_pos
+        if self.gw.clues and 0 <= pos < len(self.gw.clues):
+            clue = self.gw.clues[pos]
+            if clue.cat == 'warn':
+                if self.gw.hider.is_hidden_warn(clue.ident):
+                    self.gw.hider.unhide_warn(clue.ident)
+                else:
+                    self.gw.hider.hide_warn(clue.ident)
+
+
+class RestoreScreen(Screen):
+    """RESTORE screen - backup management"""
+    def draw_header(self):
+        self.gw.add_restore_head()
+
+    def draw_body(self):
+        self.gw.add_restore_body()
+
+
+class ViewScreen(Screen):
+    """VIEW screen - view backup contents"""
+    def draw_header(self):
+        self.gw.add_view_head()
+
+    def draw_body(self):
+        self.gw.add_view_body()
+
+
+class HelpScreen(Screen):
+    """HELP screen"""
+    def draw_header(self):
+        self.gw.add_help_head()
+
+    def draw_body(self):
+        self.gw.add_help_body()
+
+
 class GrubWiz:
     """ TBD """
     singleton = None
@@ -300,6 +393,15 @@ class GrubWiz:
         self.win = ConsoleWindow(win_opts)
 
         self.ss = ScreenStack(self.win, self.spins, SCREENS)
+
+        # Initialize screen objects
+        self.screens = {
+            HOME_ST: HomeScreen(self),
+            REVIEW_ST: ReviewScreen(self),
+            RESTORE_ST: RestoreScreen(self),
+            VIEW_ST: ViewScreen(self),
+            HELP_ST: HelpScreen(self)
+        }
 
     def _get_enums_regex(self):
         """ TBD"""
@@ -743,10 +845,15 @@ class GrubWiz:
             for param_name in params.keys():
                 if param_name not in self.param_cfg:
                     continue  # Param was filtered out (absent from system)
+
+                # Count inactive params regardless of visibility setting
+                if not self.is_active_param(param_name):
+                    self.hidden_stats.param += 1
+
+                # Determine visibility for rendering
                 if self.show_hidden_params or self.is_active_param(param_name):
                     visible_params.append(param_name)
-                else:
-                    self.hidden_stats.param += 1
+
 
             # Skip empty sections when in compact mode (hiding params)
             if not visible_params and not self.show_hidden_params:
@@ -1142,20 +1249,8 @@ class GrubWiz:
                         self.expert_edit_param(win, name)
 
                 if self.ss.act_in('hide', (HOME_ST, REVIEW_ST)):
-                    if self.ss.is_curr(HOME_ST) and name:
-                        if self.is_active_param(name):
-                            self.deactivate_param(name)
-                        else:
-                            self.activate_param(name)
-                    if self.ss.is_curr(REVIEW_ST):
-                        pos = self.win.pick_pos
-                        if self.clues and 0 <= pos < len(self.clues):
-                            clue = self.clues[pos]
-                            if clue.cat == 'warn':
-                                if self.hider.is_hidden_warn(clue.ident):
-                                    self.hider.unhide_warn(clue.ident)
-                                else:
-                                    self.hider.hide_warn(clue.ident)
+                    current_screen = self.ss.curr.num
+                    self.screens[current_screen].handle_action('hide')
 
                 if self.ss.act_in('write', (HOME_ST, REVIEW_ST)):
                     if self.ss.is_curr(HOME_ST):
