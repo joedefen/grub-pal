@@ -35,7 +35,7 @@ class WizHider:
         self.yaml_path: Path = self.config_dir / filename
         self.param_cfg = param_cfg # has out-of-box state
 
-        self.params: Set[str] = set()  # hidden params (excluded from everything)
+        # self.params: Set[str] = set()  # hidden params (excluded from everything)
         self.warns: Set[str] = set()   # Suppressed warnings (e.g., 'GRUB_DEFAULT.3')
         self.dirty_count: int = 0
         self.last_read_time: Optional[float] = None
@@ -59,7 +59,7 @@ class WizHider:
             Reads the hidden items from the YAML file,
             clearing the current state on failure.
         """
-        self.params.clear()
+        # self.params.clear()
         self.warns.clear()
         self.last_read_time = None
         self.dirty_count = 0 # Assume file state is clean
@@ -72,7 +72,7 @@ class WizHider:
                 data: Dict[str, Any] = yaml.load(f) or {}
 
             # Safely cast list data to sets
-            self.params.update(set(data.get('params', [])))
+            # self.params.update(set(data.get('params', [])))
             self.warns.update(set(data.get('warns', [])))
 
             # Record file modification time
@@ -90,7 +90,7 @@ class WizHider:
             return False
 
         data = {
-            'params': sorted(list(self.params)),
+            # 'params': sorted(list(self.params)),
             'warns': sorted(list(self.warns))
         }
 
@@ -111,18 +111,18 @@ class WizHider:
             print(f"Error writing or setting permissions on hidden-items.yaml: {e}")
             return False
 
-    def hide_param(self, name: str):
-        """Hides a parameter by name (e.g., 'GRUB_DEFAULT')."""
-        if name not in self.params:
-            self.params.add(name)
-            self.dirty_count += 1
+#   def hide_param(self, name: str):
+#       """Hides a parameter by name (e.g., 'GRUB_DEFAULT')."""
+#       if name not in self.params:
+#           self.params.add(name)
+#           self.dirty_count += 1
 
 
-    def unhide_param(self, name: str):
-        """Unhides a parameter by name."""
-        if name in self.params:
-            self.params.remove(name)
-            self.dirty_count += 1
+#   def unhide_param(self, name: str):
+#       """Unhides a parameter by name."""
+#       if name in self.params:
+#           self.params.remove(name)
+#           self.dirty_count += 1
 
     def hide_warn(self, composite_id: str):
         """Hides a warning by composite ID (e.g., 'GRUB_DEFAULT.3')."""
@@ -142,9 +142,9 @@ class WizHider:
             if key not in all_warn_keys:
                 self.warns.discard(key)
 
-    def is_hidden_param(self, name: str) -> bool:
-        """Checks if a parameter should be hidden."""
-        return name in self.params
+#   def is_hidden_param(self, name: str) -> bool:
+#       """Checks if a parameter should be hidden."""
+#       return name in self.params
 
     def is_hidden_warn(self, composite_id: str) -> bool:
         """Checks if a warning should be suppressed."""

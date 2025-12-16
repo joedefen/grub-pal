@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""
+r"""
     grub-wiz: the help grub file editor assistant
 
 ⏳ X-param redo feature (dynamic inactive params based on grub file state)
   Update UI logic to show/hide based on uncommented vs commented/absent
+  Hide Empty Sections
   Implement X-key toggle with push/pop memory
   Update write logic to only write active params
-  Add "Unvalidated Parameters" section to display    
-  
+  Add "Unvalidated Parameters" section to display
+
 --------- PREVIOUS FULLER TODO List
 
 ==== Feature 1: X-Param Redo (Dynamic Inactive Params)
@@ -213,6 +214,7 @@ class GrubWiz:
         self.defined_param_names = None # all of them
         self.param_names = None
         self.param_values = None
+        self.saved_active_param_values = None # for deactivate/activate scenario
         self.param_defaults = None
         self.prev_values = None
         self.param_name_wid = 0
@@ -241,6 +243,7 @@ class GrubWiz:
         self.param_cfg = {}
         self.positions = []
         self.param_values, self.prev_values = {}, {}
+        self.saved_active_param_values = {}
         self.param_defaults = {}
         self.must_reviews = None
         self.ss = None
@@ -350,23 +353,24 @@ class GrubWiz:
 
     def _get_enums_regex(self):
         """ TBD"""
-        enums, regex, param_name = None, None, None
+        enums, regex, param_name, value = None, None, None, None
         pos = self.win.pick_pos
-        if self.ss.is_curr(HOME_ST):
-            if self.seen_positions and 0 <= pos < len(self.seen_positions):
-                param_name = self.seen_positions[pos].param_name
-        elif self.ss.is_curr(REVIEW_ST):
+#       if self.ss.is_curr(HOME_ST):
+#           if self.seen_positions and 0 <= pos < len(self.seen_positions):
+#               param_name = self.seen_positions[pos].param_name
+        if self.ss.is_curr((REVIEW_ST, HOME_ST)):
             if self.clues and 0 <= pos < len(self.clues):
                 clue = self.clues[pos]
                 if clue.cat == 'param':
                     param_name = clue.ident
         if not param_name:
-            return '', {}, {}, ''
+            return '', {}, {}, '', None
 
         cfg = self.param_cfg[param_name]
         enums = cfg.get('enums', None)
         regex = cfg.get('edit_re', None)
-        return param_name, cfg, enums, regex
+        value = self.param_values.get(param_name, None)
+        return param_name, cfg, enums, regex, value
 
     def add_restore_head(self):
         """ TBD """
@@ -648,18 +652,17 @@ class GrubWiz:
 
         middle =  ''
         if cat == 'param':
-            param_name, _, enums, regex = self._get_enums_regex()
+            param_name, _, enums, regex, value = self._get_enums_regex()
             if enums:
                 # middle += ' 🡄 🡆'⮕
                 # middle += '🠜🠞'
                 middle += '⮜–⮞'
             if regex:
                 middle += ' [e]dit'
-            if self.param_values[param_name] not in ('##', '<>'):
-                middle += ' [d]el'
             if not review and param_name:
-                middle += ' x:unmark' if self.hider.is_hidden_param(
-                            param_name) else ' x:mark'
+                middle += (' x:comment-out' if self.is_active_param(
+                            param_name) else ' x:uncomment' if value == GrubFile.COMMENT
+                            else ' x:create')
         if cat == 'warn' and review:
             middle += ' x:unmark' if self.hider.is_hidden_warn(
                         ident) else ' x:mark'
@@ -726,11 +729,44 @@ class GrubWiz:
         self.ensure_visible_group()
         return pos
 
+    def is_active_param(self, param_name):
+        """ is the param neither commented out nor absent? """
+        value = self.param_values.get(param_name, None)
+        if value is not None:
+            if value not in (GrubFile.COMMENT, GrubFile.ABSENT):
+                return True
+            return False
+        return True # or False is better?
+
+    def activate_param(self, param_name):
+        """ TBD """
+        value = self.param_values.get(param_name, None)
+        if value in (GrubFile.COMMENT, GrubFile.ABSENT):
+            value = self.saved_active_param_values.get(param_name, None)
+            if value is None:
+                value = self.param_cfg[param_name].get('default', '')
+            self.param_values[param_name] = value
+            return True
+        return False # or False is better?
+
+    def deactivate_param(self, param_name):
+        """ make a param inactive by commenting it out
+            - save the value in case activated
+        """
+        value = self.param_values.get(param_name, None)
+        if value not in (GrubFile.COMMENT, GrubFile.ABSENT):
+            self.saved_active_param_values[param_name] = value
+            self.param_values[param_name] = GrubFile.COMMENT
+            return True
+        return False
+
+
+
     def body_param_lines(self, param_name, is_current):
         """ Build a body line for a param """
         tab = self.get_tab()
         marker = ' '
-        if self.ss.is_curr(HOME_ST) and self.hider.is_hidden_param(param_name):
+        if self.ss.is_curr(HOME_ST) and not self.is_active_param(param_name):
             marker = '✘'
         value = self.param_values[param_name]
         line = f'{marker} {param_name[5:]:·<{tab.lwid-2}}'
@@ -755,9 +791,9 @@ class GrubWiz:
         self.seen_positions = []
         self.clues = []
         for ns in self.positions:
-            self.hidden_stats.param += int(self.hider.is_hidden_param(ns.param_name))
+            self.hidden_stats.param += int(not self.is_active_param(ns.param_name))
             if (not ns.param_name or self.show_hidden_params
-                    or not self.hider.is_hidden_param(ns.param_name)):
+                    or self.is_active_param(ns.param_name)):
                 self.seen_positions.append(ns)
         for pos, ns in enumerate(self.seen_positions):
             if ns.section_name == ' ':
@@ -777,7 +813,7 @@ class GrubWiz:
                 if len(param_lines) > 1:
                     line = line[:self.win.cols-2] + '⯈'
                 win.add_body(line)
-                self.clues.append(Clue('param', 'param_name'))
+                self.clues.append(Clue('param', param_name))
                 continue
             found_current = True
             # cfg = self.param_cfg[param_name]
@@ -794,7 +830,7 @@ class GrubWiz:
                 emits.append(f'... beware: {hide_cnt} HIDDEN lines ...')
             for emit in emits:
                 win.add_body(emit)
-            self.clues.append(Clue('param', 'param_name', len(emits)))
+            self.clues.append(Clue('param', param_name, len(emits)))
         return found_current
 
     def drop_down_lines(self, param_name):
@@ -1090,7 +1126,7 @@ class GrubWiz:
 
                 name, _, enums, regex = '', None, {}, ''
                 if self.ss.is_curr((HOME_ST, REVIEW_ST)):
-                    name, _, enums, regex = self._get_enums_regex()
+                    name, _, enums, regex, _ = self._get_enums_regex()
                 if self.ss.act_in('escape', (REVIEW_ST, RESTORE_ST, VIEW_ST)):
                     if self.ss.stack:
                         self.prev_pos = self.ss.pop()
@@ -1134,10 +1170,10 @@ class GrubWiz:
 
                 if self.ss.act_in('hide', (HOME_ST, REVIEW_ST)):
                     if self.ss.is_curr(HOME_ST) and name:
-                        if self.hider.is_hidden_param(name):
-                            self.hider.unhide_param(name)
+                        if self.is_active_param(name):
+                            self.deactivate_param(name)
                         else:
-                            self.hider.hide_param(name)
+                            self.activate_param(name)
                     if self.ss.is_curr(REVIEW_ST):
                         pos = self.win.pick_pos
                         if self.clues and 0 <= pos < len(self.clues):
