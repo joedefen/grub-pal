@@ -40,8 +40,7 @@ from argparse import ArgumentParser
 from types import SimpleNamespace
 from typing import Any #, Tuple #, Opt
 from console_window import OptionSpinner, ConsoleWindow, ConsoleWindowOpts
-from .CannedConfig import CannedConfig
-# from .GrubParser import GrubParser
+from .CannedConfig import CannedConfig, EXPERT_EDIT
 from .GrubFile import GrubFile
 from .GrubCfgParser import get_top_level_grub_entries
 from .BackupMgr import BackupMgr, GRUB_DEFAULT_PATH
@@ -169,13 +168,8 @@ class Screen:
         self.gw = grub_wiz  # Reference to main GrubWiz instance
         self.win = grub_wiz.win
 
-    def draw_header(self):
-        """Draw screen-specific header - override in subclasses"""
-        pass
-
-    def draw_body(self):
-        """Draw screen-specific body - override in subclasses"""
-        pass
+    def draw_screen(self):
+        """Draw screen-specific lines (header and body)"""
 
     def handle_action(self, action_name):
         """
@@ -183,7 +177,7 @@ class Screen:
         Looks for method named '{action_name}_action' and calls it if exists.
         Returns True if action was handled, False otherwise.
         """
-        method_name = f'{action_name}_action'
+        method_name = f'{action_name}_ACTION'
         method = getattr(self, method_name, None)
         if method and callable(method):
             method()
@@ -193,13 +187,169 @@ class Screen:
 
 class HomeScreen(Screen):
     """HOME screen - parameter editing"""
-    def draw_header(self):
-        self.gw.add_home_head()
+    def draw_screen(self):
+        """ TBD """
+        self.win.set_pick_mode(True)
+        self.draw_body()
+        self.draw_head()
+
+    def body_param_lines(self, param_name, is_current):
+        """ Build a body line for a param """
+        gw = self.gw
+        tab = self.get_tab()
+        marker = ' '
+        if gw.ss.is_curr(HOME_ST) and not gw.is_active_param(param_name):
+            marker = '✘'
+        value = gw.param_values[param_name]
+        line = f'{marker} {param_name[5:]:·<{tab.lwid-2}}'
+        indent = len(line)
+        line += f'  {value}'
+        wid = self.win.cols - 1 # effective width
+        if len(line) > wid and is_current:
+            line = textwrap.fill(line, width=wid,
+                       subsequent_indent=' '*indent)
+        elif len(line) > wid and not is_current:
+            line = line [:self.win.cols-2] + '⯈'
+        return line.splitlines()
 
     def draw_body(self):
-        return self.gw.add_home_body()
+        """ TBD """
+        gw = self.gw
+        gw.hidden_stats = SimpleNamespace(param=0, warn=0)
+        win = self.win # short hand
+        picked = win.pick_pos
+        found_current = False
+        gw.clues = []
+        first_visible_section = True
 
-    def hide_action(self):
+        # Iterate through sections directly, hiding empty ones
+        for section_name, params in gw.sections.items():
+            # Collect visible params for this section
+            visible_params = []
+            for param_name in params.keys():
+                if param_name not in gw.param_cfg:
+                    continue  # Param was filtered out (absent from system)
+
+                # Count inactive params regardless of visibility setting
+                if not gw.is_active_param(param_name):
+                    gw.hidden_stats.param += 1
+
+                # Determine visibility for rendering
+                if gw.show_hidden_params or gw.is_active_param(param_name):
+                    visible_params.append(param_name)
+
+
+            # Skip empty sections when in compact mode (hiding params)
+            if not visible_params and not gw.show_hidden_params:
+                continue
+
+            # Add blank line before sections (except first visible section)
+            if not first_visible_section:
+                win.add_body(' ')
+                gw.clues.append(Clue('nop'))
+            first_visible_section = False
+
+            # Add section header
+            win.add_body(f'[{section_name}]')
+            gw.clues.append(Clue('nop'))
+
+            # Add visible params
+            for param_name in visible_params:
+                pos = len(gw.clues)
+                is_current = bool(picked == pos)
+                param_lines = self.body_param_lines(param_name, is_current)
+
+                if pos != picked:
+                    line = param_lines[0]
+                    if len(param_lines) > 1:
+                        line = line[:win.cols-2] + '⯈'
+                    win.add_body(line)
+                    gw.clues.append(Clue('param', param_name))
+                    continue
+
+                found_current = True
+                emits = param_lines + gw.drop_down_lines(param_name)
+
+                # Truncate if exceeds view size
+                view_size = win.scroll_view_size
+                if len(emits) > view_size:
+                    hide_cnt = 1 + len(emits) - view_size
+                    emits = emits[0:view_size-1]
+                    emits.append(f'... beware: {hide_cnt} HIDDEN lines ...')
+
+                for emit in emits:
+                    win.add_body(emit)
+                gw.clues.append(Clue('param', param_name, len(emits)))
+
+        return found_current
+
+    def add_common_head1(self, title):
+        """ TBD"""
+        gw = self.gw
+        header = f'{title} '
+        level = gw.spins.guide
+        esc = ' ESC:back' if gw.ss.is_curr(REVIEW_ST) else ''
+        header += f' [g]uide={level} [w]rite [R]estore{esc} ?:help [q]uit'
+        header += f'  𝚫={len(gw.get_diffs())}'
+        gw.add_fancy_header(header)
+        gw.warn_db.write_if_dirty()
+
+    def add_common_head2(self, left):
+        """ TBD"""
+        gw = self.gw
+        tab = self.get_tab()
+        review = gw.ss.is_curr(REVIEW_ST)
+        picked = gw.win.pick_pos
+        if 0 <= picked < len(gw.clues):
+            clue = gw.clues[picked]
+            cat, ident = clue.cat, clue.ident
+        else:
+            cat, ident = '', ''
+
+        middle =  ''
+        if cat == 'param':
+            param_name, _, enums, regex, value = gw._get_enums_regex()
+            if enums:
+                middle += '⮜–⮞'
+            if regex:
+                middle += ' [e]dit'
+            if not review and param_name:
+                middle += (' x:comment-out' if gw.is_active_param(
+                            param_name) else ' x:uncomment' if value == GrubFile.COMMENT
+                            else ' x:create')
+        if cat == 'warn' and review:
+            middle += ' x:unmark' if gw.warn_db.is_hidden_warn(
+                        ident) else ' x:mark'
+
+        gw.add_fancy_header(f'{left:<{tab.lwid}}  {middle}')
+
+    def get_tab(self):
+        """ get the tab positions of the print cols """
+        return Tab(self.win.cols, self.gw.param_name_wid)
+
+    def draw_head(self):
+        """ HOME screen header"""
+        gw = self.gw
+        self.add_common_head1('EDIT')
+        tab = self.get_tab()
+
+        # if any param is hidden on this screen, then show
+        header, cnt = '', gw.hidden_stats.param
+        if cnt:
+            header = 's:hide' if gw.show_hidden_params else '[s]how'
+            header += f' {cnt} ✘-params'
+        header = f'{header:<{tab.lwid}}'
+
+        self.add_common_head2(header)
+        gw.ensure_visible_group()
+
+#   def draw_header(self):
+#       self.gw.add_home_head()
+
+#   def draw_body(self):
+#       return self.gw.add_home_body()
+
+    def hide_ACTION(self):
         """Handle 'x' key on HOME screen - toggle param activation"""
         name, _, _, _, _ = self.gw._get_enums_regex()
         if name:
@@ -209,51 +359,166 @@ class HomeScreen(Screen):
                 self.gw.activate_param(name)
 
 
-class ReviewScreen(Screen):
+class ReviewScreen(HomeScreen):
     """REVIEW screen - show diffs and warnings"""
-    def draw_header(self):
-        self.gw.add_review_head()
+    def draw_screen(self):
+        """ TBD """
+        self.win.set_pick_mode(True)
+        self.add_body()
+        self.add_head()
 
-    def draw_body(self):
-        self.gw.add_review_body()
+    def add_body(self):
+        """ TBD """
+        def add_review_item(param_name, value, old_value=None, heys=None):
+            nonlocal reviews
+            if param_name not in reviews:
+                reviews[param_name] = SimpleNamespace(
+                    value=value,
+                    old_value=old_value,
+                    heys=[] if heys is None else heys
+                )
+            return reviews[param_name]
 
-    def hide_action(self):
+        gw = self.gw
+        reviews = {}
+        gw.hidden_stats = SimpleNamespace(param=0, warn=0)
+        diffs = gw.get_diffs()
+        warns, all_warn_info = gw.wiz_validator.make_warns(gw.param_values)
+        gw.warn_db.audit_info(all_warn_info)
+        if gw.must_reviews is None:
+            gw.must_reviews = set()
+        for param_name in list(diffs.keys()):
+            gw.must_reviews.add(param_name)
+        for param_name, heys in warns.items():
+            for hey in heys:
+                words = re.findall(r'\b[_A-Z]+\b', hey[1])
+                for word in words:
+                    other_name = word
+                    if f'GRUB_{word}'in gw.param_values:
+                        other_name = f'GRUB_{word}'
+                    elif word not in gw.param_values:
+                        continue
+                    gw.must_reviews.add(other_name)
+                gw.must_reviews.add(param_name)
+
+        for param_name in gw.param_names:
+            if param_name not in gw.must_reviews:
+                continue
+            if param_name in diffs:
+                old_value, new_value = diffs[param_name]
+                item = add_review_item(param_name, new_value, old_value)
+            else:
+                value = gw.param_values[param_name]
+                item = add_review_item(param_name, value)
+            heys = warns.get(param_name, None)
+            if heys:
+                item.heys += heys
+
+        gw.clues = []
+        picked = self.win.pick_pos
+
+        for param_name, ns in reviews.items():
+            clue_idx = len(gw.clues)
+            param_pos = pos = len(gw.clues)
+#           keys, indent = [], 30
+            tab = self.get_tab()
+            is_current = bool(pos==picked)
+            param_lines = self.body_param_lines(param_name, is_current)
+            gw.clues.append(Clue('param', param_name))
+            for line in param_lines:
+                self.win.add_body(line)
+            pos += len(param_lines)
+
+            changed = bool(ns.old_value is not None
+                           and str(ns.value) != str(ns.old_value))
+            if changed:
+                pos += 1
+                self.win.add_body(f'{"was":>{tab.lwid}}  {ns.old_value}')
+                gw.clues.append(Clue('nop'))
+
+            for hey in ns.heys:
+                warn_key = f'{param_name} {hey[1]}'
+                is_hidden = gw.warn_db.is_hidden_warn(warn_key)
+                gw.hidden_stats.warn += int(is_hidden)
+
+                if not is_hidden or gw.show_hidden_warns:
+                    mark = '✘' if is_hidden else ' '
+                    sub_text = f'{mark} {hey[0]:>4}'
+                    line = f'{sub_text:>{tab.lwid}}  {hey[1]}'
+                    cnt = gw.add_wrapped_body_line(line,
+                                        tab.lwid+2, pos==picked)
+                    gw.clues.append(Clue('warn', warn_key, cnt))
+                    pos += cnt
+            gw.clues[clue_idx].group_cnt = pos - param_pos
+
+            if is_current:
+                emits = gw.drop_down_lines(param_name)
+                pos += len(emits)
+                for emit in emits:
+                    self.win.add_body(emit)
+
+
+    def add_head(self):
+        """ Construct the review screen header
+            Presumes the body was created and self.clues[]
+            is populated.
+        """
+        gw = self.gw
+        self.add_common_head1('REVIEW')
+
+        # if any warn is hidden on this screen, then show
+        header, cnt = '', gw.hidden_stats.warn
+        if cnt:
+            header = 's:hide' if gw.show_hidden_warns else '[s]how'
+            header += f' {cnt} ✘-warns'
+        header = f'{header:<24}'
+        self.add_common_head2(header)
+        gw.ensure_visible_group()
+
+#   def draw_header(self):
+#       self.gw.add_review_head()
+
+#   def draw_body(self):
+#       self.gw.add_review_body()
+
+    def hide_ACTION(self):
         """Handle 'x' key on REVIEW screen - toggle warning suppression"""
+        gw = self.gw
         pos = self.win.pick_pos
-        if self.gw.clues and 0 <= pos < len(self.gw.clues):
-            clue = self.gw.clues[pos]
+        if gw.clues and 0 <= pos < len(gw.clues):
+            clue = gw.clues[pos]
             if clue.cat == 'warn':
-                if self.gw.hider.is_hidden_warn(clue.ident):
-                    self.gw.hider.unhide_warn(clue.ident)
+                if gw.warn_db.is_hidden_warn(clue.ident):
+                    gw.warn_db.unhide_warn(clue.ident)
                 else:
-                    self.gw.hider.hide_warn(clue.ident)
+                    gw.warn_db.hide_warn(clue.ident)
 
 
 class RestoreScreen(Screen):
     """RESTORE screen - backup management"""
-    def draw_header(self):
-        self.gw.add_restore_head()
+#   def draw_header(self):
+#       self.gw.add_restore_head()
 
-    def draw_body(self):
-        self.gw.add_restore_body()
+#   def draw_body(self):
+#       self.gw.add_restore_body()
 
 
 class ViewScreen(Screen):
     """VIEW screen - view backup contents"""
-    def draw_header(self):
-        self.gw.add_view_head()
+#   def draw_header(self):
+#       self.gw.add_view_head()
 
-    def draw_body(self):
-        self.gw.add_view_body()
+#   def draw_body(self):
+#       self.gw.add_view_body()
 
 
 class HelpScreen(Screen):
     """HELP screen"""
-    def draw_header(self):
-        self.gw.add_help_head()
+#   def draw_header(self):
+#       self.gw.add_help_head()
 
-    def draw_body(self):
-        self.gw.add_help_body()
+#   def draw_body(self):
+#       self.gw.add_help_body()
 
 
 class GrubWiz:
@@ -277,7 +542,7 @@ class GrubWiz:
         self.param_name_wid = 0
         self.menu_entries = None
         self.backup_mgr = BackupMgr()
-        self.hider = None
+        self.warn_db = None
         self.grub_writer = GrubWriter()
         self.param_discovery = ParamDiscovery.get_singleton()
         self.wiz_validator = None
@@ -293,6 +558,7 @@ class GrubWiz:
         self.grub_checksum = ''
         self.bak_lines = None # the currently viewed .bak file
         self.bak_path = None
+        self.screens = []
         self._reinit()
 
     def _reinit(self):
@@ -347,11 +613,7 @@ class GrubWiz:
             self.param_cfg['GRUB_DEFAULT']['enums'].update(self.menu_entries)
         except Exception:
             pass
-        self.hider = WarnDB(param_cfg=self.param_cfg)
-
-    def get_tab(self):
-        """ get the tab positions of the print cols """
-        return Tab(self.win.cols, self.param_name_wid)
+        self.warn_db = WarnDB(param_cfg=self.param_cfg)
 
     def setup_win(self):
         """TBD """
@@ -448,21 +710,6 @@ class GrubWiz:
                 self.win.add_body(f'{' ':>6}{line[:wid]}')
                 line = line[wid:]
 
-    def add_review_head(self):
-        """ Construct the review screen header
-            Presumes the body was created and self.clues[]
-            is populated.
-        """
-        self.add_common_head1('REVIEW')
-
-        # if any warn is hidden on this screen, then show
-        header, cnt = '', self.hidden_stats.warn
-        if cnt:
-            header = 's:hide' if self.show_hidden_warns else '[s]how'
-            header += f' {cnt} ✘-warns'
-        header = f'{header:<24}'
-        self.add_common_head2(header)
-        self.ensure_visible_group()
 
     def truncate_line(self, line):
         """ TBD """
@@ -489,100 +736,8 @@ class GrubWiz:
         """ TBD """
         if not self.show_hidden_warns:
             warn_key = f'{param_name} {hey[1]}'
-            return self.hider.is_hidden_warn(warn_key)
+            return self.warn_db.is_hidden_warn(warn_key)
         return False
-
-
-    def add_review_body(self):
-        """ TBD """
-        def add_review_item(param_name, value, old_value=None, heys=None):
-            nonlocal reviews
-            if param_name not in reviews:
-                reviews[param_name] = SimpleNamespace(
-                    value=value,
-                    old_value=old_value,
-                    heys=[] if heys is None else heys
-                )
-            return reviews[param_name]
-
-        reviews = {}
-        self.hidden_stats = SimpleNamespace(param=0, warn=0)
-        diffs = self.get_diffs()
-        warns, all_warn_info = self.wiz_validator.make_warns(self.param_values)
-        self.hider.audit_info(all_warn_info)
-        if self.must_reviews is None:
-            self.must_reviews = set()
-        for param_name in list(diffs.keys()):
-            self.must_reviews.add(param_name)
-        for param_name, heys in warns.items():
-            for hey in heys:
-#               if self.is_warn_hidden(param_name, hey):
-#                   continue
-                words = re.findall(r'\b[_A-Z]+\b', hey[1])
-                for word in words:
-                    other_name = word
-                    if f'GRUB_{word}'in self.param_values:
-                        other_name = f'GRUB_{word}'
-                    elif word not in self.param_values:
-                        continue
-                    self.must_reviews.add(other_name)
-                self.must_reviews.add(param_name)
-
-        for param_name in self.param_names:
-            if param_name not in self.must_reviews:
-                continue
-            if param_name in diffs:
-                old_value, new_value = diffs[param_name]
-                item = add_review_item(param_name, new_value, old_value)
-            else:
-                value = self.param_values[param_name]
-                item = add_review_item(param_name, value)
-            heys = warns.get(param_name, None)
-            if heys:
-                item.heys += heys
-
-        self.clues = []
-        picked = self.win.pick_pos
-
-        for param_name, ns in reviews.items():
-            clue_idx = len(self.clues)
-            param_pos = pos = len(self.clues)
-#           keys, indent = [], 30
-            tab = self.get_tab()
-            is_current = bool(pos==picked)
-            param_lines = self.body_param_lines(param_name, is_current)
-            self.clues.append(Clue('param', param_name))
-            for line in param_lines:
-                self.win.add_body(line)
-            pos += len(param_lines)
-
-            changed = bool(ns.old_value is not None
-                           and str(ns.value) != str(ns.old_value))
-            if changed:
-                pos += 1
-                self.win.add_body(f'{"was":>{tab.lwid}}  {ns.old_value}')
-                self.clues.append(Clue('nop'))
-
-            for hey in ns.heys:
-                warn_key = f'{param_name} {hey[1]}'
-                is_hidden = self.hider.is_hidden_warn(warn_key)
-                self.hidden_stats.warn += int(is_hidden)
-
-                if not is_hidden or self.show_hidden_warns:
-                    mark = '✘' if is_hidden else ' '
-                    sub_text = f'{mark} {hey[0]:>4}'
-                    line = f'{sub_text:>{tab.lwid}}  {hey[1]}'
-                    cnt = self.add_wrapped_body_line(line,
-                                        tab.lwid+2, pos==picked)
-                    self.clues.append(Clue('warn', warn_key, cnt))
-                    pos += cnt
-            self.clues[clue_idx].group_cnt = pos - param_pos
-
-            if is_current:
-                emits = self.drop_down_lines(param_name)
-                pos += len(emits)
-                for emit in emits:
-                    self.win.add_body(emit)
 
     def get_diffs(self):
         """ get the key/value pairs with differences"""
@@ -677,61 +832,8 @@ class GrubWiz:
             resume = bool(idx > 0)  # Resume for all but the first section
             self.win.add_header(text, attr=attr, resume=resume)
 
-    def add_common_head1(self, title):
-        """ TBD"""
-        header = f'{title} '
-        level = self.spins.guide
-        esc = ' ESC:back' if self.ss.is_curr(REVIEW_ST) else ''
-        header += f' [g]uide={level} [w]rite [R]estore{esc} ?:help [q]uit'
-        header += f'  𝚫={len(self.get_diffs())}'
-        self.add_fancy_header(header)
-        self.hider.write_if_dirty()
-
-    def add_common_head2(self, left):
-        """ TBD"""
-        tab = self.get_tab()
-        review = self.ss.is_curr(REVIEW_ST)
-        picked = self.win.pick_pos
-        if 0 <= picked < len(self.clues):
-            clue = self.clues[picked]
-            cat, ident = clue.cat, clue.ident
-        else:
-            cat, ident = '', ''
 
 
-        middle =  ''
-        if cat == 'param':
-            param_name, _, enums, regex, value = self._get_enums_regex()
-            if enums:
-                # middle += ' 🡄 🡆'⮕
-                # middle += '🠜🠞'
-                middle += '⮜–⮞'
-            if regex:
-                middle += ' [e]dit'
-            if not review and param_name:
-                middle += (' x:comment-out' if self.is_active_param(
-                            param_name) else ' x:uncomment' if value == GrubFile.COMMENT
-                            else ' x:create')
-        if cat == 'warn' and review:
-            middle += ' x:unmark' if self.hider.is_hidden_warn(
-                        ident) else ' x:mark'
-
-        self.add_fancy_header(f'{left:<{tab.lwid}}  {middle}')
-
-    def add_home_head(self):
-        """ TBD"""
-        self.add_common_head1('EDIT')
-        tab = self.get_tab()
-
-        # if any param is hidden on this screen, then show
-        header, cnt = '', self.hidden_stats.param
-        if cnt:
-            header = 's:hide' if self.show_hidden_params else '[s]how'
-            header += f' {cnt} ✘-params'
-        header = f'{header:<{tab.lwid}}'
-
-        self.add_common_head2(header)
-        self.ensure_visible_group()
 
     def ensure_visible_group(self):
         """ TBD """
@@ -811,93 +913,6 @@ class GrubWiz:
 
 
 
-    def body_param_lines(self, param_name, is_current):
-        """ Build a body line for a param """
-        tab = self.get_tab()
-        marker = ' '
-        if self.ss.is_curr(HOME_ST) and not self.is_active_param(param_name):
-            marker = '✘'
-        value = self.param_values[param_name]
-        line = f'{marker} {param_name[5:]:·<{tab.lwid-2}}'
-        indent = len(line)
-        line += f'  {value}'
-        wid = self.win.cols - 1 # effective width
-        if len(line) > wid and is_current:
-            line = textwrap.fill(line, width=wid,
-                       subsequent_indent=' '*indent)
-        elif len(line) > wid and not is_current:
-            line = line [:self.win.cols-2] + '⯈'
-        return line.splitlines()
-
-    def add_home_body(self):
-        """ TBD """
-        self.hidden_stats = SimpleNamespace(param=0, warn=0)
-        win = self.win # short hand
-        picked = win.pick_pos
-        found_current = False
-        self.clues = []
-        first_visible_section = True
-
-        # Iterate through sections directly, hiding empty ones
-        for section_name, params in self.sections.items():
-            # Collect visible params for this section
-            visible_params = []
-            for param_name in params.keys():
-                if param_name not in self.param_cfg:
-                    continue  # Param was filtered out (absent from system)
-
-                # Count inactive params regardless of visibility setting
-                if not self.is_active_param(param_name):
-                    self.hidden_stats.param += 1
-
-                # Determine visibility for rendering
-                if self.show_hidden_params or self.is_active_param(param_name):
-                    visible_params.append(param_name)
-
-
-            # Skip empty sections when in compact mode (hiding params)
-            if not visible_params and not self.show_hidden_params:
-                continue
-
-            # Add blank line before sections (except first visible section)
-            if not first_visible_section:
-                win.add_body(' ')
-                self.clues.append(Clue('nop'))
-            first_visible_section = False
-
-            # Add section header
-            win.add_body(f'[{section_name}]')
-            self.clues.append(Clue('nop'))
-
-            # Add visible params
-            for param_name in visible_params:
-                pos = len(self.clues)
-                is_current = bool(picked == pos)
-                param_lines = self.body_param_lines(param_name, is_current)
-
-                if pos != picked:
-                    line = param_lines[0]
-                    if len(param_lines) > 1:
-                        line = line[:win.cols-2] + '⯈'
-                    win.add_body(line)
-                    self.clues.append(Clue('param', param_name))
-                    continue
-
-                found_current = True
-                emits = param_lines + self.drop_down_lines(param_name)
-
-                # Truncate if exceeds view size
-                view_size = win.scroll_view_size
-                if len(emits) > view_size:
-                    hide_cnt = 1 + len(emits) - view_size
-                    emits = emits[0:view_size-1]
-                    emits.append(f'... beware: {hide_cnt} HIDDEN lines ...')
-
-                for emit in emits:
-                    win.add_body(emit)
-                self.clues.append(Clue('param', param_name, len(emits)))
-
-        return found_current
 
     def drop_down_lines(self, param_name):
         """ TBD """
@@ -944,10 +959,9 @@ class GrubWiz:
 
     def edit_param(self, win, name, regex):
         """ Prompt user for answer until gets it right"""
-        from .CannedConfig import EXPERT_EDIT
 
         # Check if this param uses EXPERT_EDIT mode
-        if regex == EXPERT_EDIT or regex == EXPERT_EDIT[0]:
+        if regex in (EXPERT_EDIT, EXPERT_EDIT[0]):
             self.expert_edit_param(win, name)
             return
 
@@ -1175,15 +1189,9 @@ class GrubWiz:
                 self.add_restore_body()
                 self.add_restore_head()
 
-            elif self.ss.is_curr(REVIEW_ST):
-                win.set_pick_mode(True)
-                self.add_review_body()
-                self.add_review_head()
-
-            else: # HOME_ST screen
-                win.set_pick_mode(True)
-                self.add_home_body()
-                self.add_home_head()
+            elif self.ss.is_curr((REVIEW_ST, HOME_ST)):
+                screen_num = self.ss.curr.num
+                self.screens[screen_num].draw_screen()
 
             win.render()
             key = win.prompt(seconds=self.next_prompt_seconds[0])
@@ -1366,7 +1374,7 @@ def main():
         deleted = []
         try:
             for target in (wiz.param_discovery.cache_file,
-                            wiz.hider.yaml_path):
+                            wiz.warn_db.yaml_path):
                 if os.path.isfile(target):
                     os.unlink(target)
                     deleted.append(str(target))
