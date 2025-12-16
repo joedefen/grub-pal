@@ -21,7 +21,8 @@ from types import SimpleNamespace
 from typing import Any #, Tuple #, Opt
 from console_window import OptionSpinner, ConsoleWindow, ConsoleWindowOpts
 from .CannedConfig import CannedConfig
-from .GrubParser import GrubParser
+# from .GrubParser import GrubParser
+from .GrubFile import GrubFile
 from .GrubCfgParser import get_top_level_grub_entries
 from .BackupMgr import BackupMgr, GRUB_DEFAULT_PATH
 from .WizHider import WizHider
@@ -161,7 +162,6 @@ class GrubWiz:
         self.param_values = None
         self.param_defaults = None
         self.prev_values = None
-        self.parsed = None
         self.param_name_wid = 0
         self.menu_entries = None
         self.backup_mgr = BackupMgr()
@@ -206,10 +206,10 @@ class GrubWiz:
                     param_name=None, section_name=' '))
             self.positions.append( SimpleNamespace(
                 param_name=None, section_name=section))
-            for param_name, payload in params.items():
+            for param_name, cfg in params.items():
                 if param_name in absent_param_names:
                     continue
-                self.param_cfg[param_name] = payload
+                self.param_cfg[param_name] = cfg
                 self.positions.append(SimpleNamespace(
                     param_name=param_name, section_name=None))
                 self.param_defaults[param_name
@@ -218,16 +218,14 @@ class GrubWiz:
         if self.wiz_validator is None:
             self.wiz_validator = WizValidator(self.param_cfg)
 
-        self.parsed = GrubParser(params=self.param_names)
-        self.parsed.get_etc_default_grub()
+        self.grub_file = GrubFile(supported_params=self.param_cfg)
+        self.grub_file.read_file()
         self.prev_pos = -1024  # to detect direction
 
         name_wid = 0
         for param_name in self.param_names:
             name_wid = max(name_wid, len(param_name))
-            value = self.parsed.vals.get(param_name, None)
-            if value is None:
-                value = self.param_cfg[param_name]['default']
+            value = self.grub_file.param_data[param_name].value
             self.param_values[param_name] = value
         self.param_name_wid = name_wid - len('GRUB_')
         self.prev_values.update(self.param_values)
@@ -591,6 +589,8 @@ class GrubWiz:
                 middle += '⮜–⮞'
             if regex:
                 middle += ' [e]dit'
+            if self.param_values[param_name] not in ('##', '<>'):
+                middle += ' [d]el'
             if not review and param_name:
                 middle += ' x:unmark' if self.hider.is_hidden_param(
                             param_name) else ' x:mark'
@@ -894,14 +894,9 @@ class GrubWiz:
         if not self.really_wanna('commit changes and update GRUB'):
             return
 
-        contents =  "#--# NOTE: this file was built with 'grub-wiz'\n"
-        contents += "#--#     - We suggest updating the following params with 'grub-wiz'\n"
-        contents += "#--#       although not required'\n"
-        for name, value in self.param_values.items():
-            contents += f'{name}={value}\n'
-        contents += "#--# NOTE: following are params NOT handled by 'grub-wiz'\n"
-        contents += "#--#     - update these manually.\n"
-        contents += ''.join(self.parsed.other_lines)
+        diffs = self.get_diffs()
+        for param_name, pair in diffs.items():
+            self.grub_file.param_data[param_name].new_value = pair[1]
 
         self.win.stop_curses()
         print("\033[2J\033[H") # 'clear'
@@ -911,9 +906,8 @@ class GrubWiz:
         # print(contents)
         # print('-'*60)
         ok = True
-        commit_rv = self.grub_writer.commit_validated_grub_config(contents)
-        if not commit_rv[0]: # failure
-            print(commit_rv[1])
+        commit_rv = self.grub_file.write_file()
+        if not commit_rv: # failure
             ok = False
         else:
             install_rv = self.grub_writer.run_grub_update()
@@ -976,8 +970,6 @@ class GrubWiz:
 
     def main_loop(self):
         """ TBD """
-        assert self.parsed.get_etc_default_grub()
-
         self.setup_win()
         self.do_start_up_backup()
         win, spins = self.win, self.spins # shorthand
@@ -1115,17 +1107,23 @@ class GrubWiz:
                         self.ss = ScreenStack(self.win, self.spins, SCREENS)
                         self.do_start_up_backup()
 
-                if self.ss.act_in('delete', RESTORE_ST):
-                    idx = self.win.pick_pos
-                    if 0 <= idx < len(self.ordered_backup_pairs):
-                        doomed = self.ordered_backup_pairs[idx][1]
-                        if self.really_wanna(f'remove {doomed!r}'):
-                            try:
-                                os.unlink(doomed.name)
-                            except Exception as exce:
-                                self.win.alert(
-                                    message=f'ERR: unlink({doomed.name}) [{exce}]')
-                            self.refresh_backup_list()
+                if self.ss.act_in('delete', (HOME_ST, REVIEW_ST, RESTORE_ST)):
+                    if self.ss.is_curr(RESTORE_ST):
+                        idx = self.win.pick_pos
+                        if 0 <= idx < len(self.ordered_backup_pairs):
+                            doomed = self.ordered_backup_pairs[idx][1]
+                            if self.really_wanna(f'remove {doomed!r}'):
+                                try:
+                                    os.unlink(doomed)
+                                except Exception as exce:
+                                    self.win.alert(
+                                        message=f'ERR: unlink({doomed}) [{exce}]')
+                                self.refresh_backup_list()
+                    else:
+                        if name:
+                            value = self.param_values[name]
+                            if value != '<>':
+                                self.param_values[name] = '##'
 
                 if self.ss.act_in('tag', RESTORE_ST):
                     idx = self.win.pick_pos

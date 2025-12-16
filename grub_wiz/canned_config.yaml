@@ -244,6 +244,22 @@ Security & Advanced:
       \n%ENUMS%"
     hide: True  # specialized encryption setups
 
+  GRUB_TERMINAL:
+    default: '#comment'
+    edit_re:
+    enums:
+      console: Text-mode terminal (no graphics).
+      gfxterm: Graphical terminal with theme and background support.
+      serial: Serial console for remote server management.
+      '"console serial"': Both text console and serial output.
+      '"gfxterm serial"': Both graphical and serial output.
+    guidance: "Sets both input and output terminal type for GRUB menu.
+      \n: 'console' disables graphical features (themes, backgrounds).
+      \n: Useful for servers, troubleshooting, or serial console access.
+      \n: Can combine multiple terminals (e.g., \"console serial\").
+      \n%ENUMS%"
+    hide: False
+
   GRUB_TERMINAL_INPUT:
     default: console
     edit_re:

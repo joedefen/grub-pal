@@ -1,11 +1,32 @@
 #!/usr/bin/env python3
+"""
+GrubFile:
+  On READING:
+    - parses /etc/default/grub (or substitute)
+    - associates lines (commented or not) with supported params
+    - creates special values for params w/o a read value:
+      - '#comment' if commented out
+      - '#absent' if entirely missing
+  On WRITING (after params are edited):
+    - if multiple uncommented lines for same param, will
+      comment out all but last when written (and the last
+      could become commented out)
+    - if a param has no uncommented lines but some comment lines, if
+      that param is given a legal value, it replaces the
+      last comment line when written
+    - absent param given a legal value will be placed at
+      the end as such:
+        - an empty line
+        - the "guidance" lines commented out
+        - param=value
+"""
+# pylint: disable=line-too-long,broad-exception-caught
+import sys
 import re
-from typing import List, Dict, Optional, Any, Union
+import textwrap
+from typing import List, Dict, Optional, Any #, Union
+from types import SimpleNamespace
 
-# --- Internal State Markers (for clarity) ---
-STATE_COMMENTED = "#comment"
-STATE_ABSENT = "#absent"
-ACTION_ZAP = "#zap"
 
 class GrubFile:
     """
@@ -14,47 +35,40 @@ class GrubFile:
     It preserves unmanaged lines and correctly handles comment detection (ignoring
     # inside quotes) and the 'Zap' (remove/reset to default) action.
     """
+    COMMENT = '∎' # "value" of comment lines
+    ABSENT = '≡' # "value" of absent lines
+    std_location = '/etc/default/grub'
 
-    def __init__(self, file_path: str, supported_params: List[str]):
+    def __init__(self,  supported_params: Dict[str, Any], file_path: Optional[str]=None):
         """
         Initializes the parser and reads the file immediately.
         """
-        self.file_path = file_path
+        self.file_path = file_path if file_path else GrubFile.std_location
         self.supported_params = supported_params
-        self.original_lines: List[str] = []
-        # Structure: {PARAM: {'line_num': int/None, 'original_value': str, 'new_value': str/None}}
+        self.lines: List[str] = []
+        self.param_of: List[Optional[str]] = []
+        # Structure: {PARAM: {'line_num': int/None, 'value': str, 'new_value': str/None}}
         self.param_data: Dict[str, Dict[str, Any]] = {}
 
-        self._initialize_param_data()
         self.read_file()
 
     def _initialize_param_data(self):
         """Pre-fills the data structure with all supported params set to ABSENT."""
         for param in self.supported_params:
-            self.param_data[param] = {
-                'line_num': None,
-                'original_value': STATE_ABSENT,
-                'new_value': None
-            }
+            self.param_data[param] = SimpleNamespace(
+                line_num=None, value=self.ABSENT, new_value=None,)
 
     # --- Core Parsing Methods ---
 
-    def _clean_value(self, line: str) -> str:
+    def _cleanse(self, value_part: str) -> str:
         """
         Extracts the parameter value from a line, correctly clipping any unquoted comments.
 
         Example: 'GRUB_TIMEOUT=5 # 10 seconds default' -> '5'
         Example: 'GRUB_CMDLINE="has #hash" #comment' -> '"has #hash"'
         """
-        # Find the assignment part (everything after the first '=')
-        try:
-            _, assignment_part = line.split('=', 1)
-        except ValueError:
-            # Should not happen for valid lines, but good for robustness
-            return ""
+        value_part = value_part.strip()
 
-        value_part = assignment_part.strip()
-        
         # Look for the first UNQUOTED '#' to find the comment start
         in_single_quotes = False
         in_double_quotes = False
@@ -70,158 +84,206 @@ class GrubFile:
                 break
 
         # Clip the string at the comment index and strip trailing whitespace
-        cleaned_value = value_part[:comment_index].rstrip()
-
-        # Remove surrounding quotes if present (simplifies TUI interaction, but keep quotes for cmdline params)
-        if cleaned_value.startswith('"') and cleaned_value.endswith('"'):
-             # We should generally keep the quotes if the user provides them, but for
-             # basic values like GRUB_TIMEOUT=5, we strip them if they were quoted.
-             # For simplicity, we just return the cleaned value as is.
-             return cleaned_value 
-        
-        return cleaned_value
-
+        return value_part[:comment_index].rstrip()
 
     def read_file(self):
         """Reads the GRUB file and populates the internal data structures."""
         try:
-            with open(self.file_path, 'r') as f:
-                self.original_lines = f.readlines()
+            with open(self.file_path, 'r', encoding='utf-8') as f:
+                self.lines = f.readlines()
+                self.param_of = [None] * len(self.lines)
+                self._initialize_param_data()
+
         except FileNotFoundError:
             print(f"Warning: File not found at {self.file_path}. Starting with empty configuration.")
-            self.original_lines = []
+            self.lines = []
             return
 
-        for i, line in enumerate(self.original_lines):
+        for i, line in enumerate(self.lines):
             line = line.strip()
 
             if not line:
                 continue
 
-            # Check for commented line
-            if line.startswith('#'):
-                # Check if it's a supported parameter that is commented out
-                for param in self.supported_params:
-                    # Look for the parameter name followed by '='
-                    if re.match(rf"#{param}\s*=", line):
-                        self.param_data[param]['line_num'] = i
-                        self.param_data[param]['original_value'] = STATE_COMMENTED
-                        break
-                continue
+            mat = re.match(r"\s*(#)?\s*(GRUB_\w+)\s*=(.*)$", line)
+            if mat:
+                param = mat.group(2)
+                if param not in self.supported_params:
+                    continue  # Not a supported parameter
 
-            # Check for active line
-            for param in self.supported_params:
-                # Look for the parameter name at the start of the line, followed by '='
-                if line.startswith(f"{param}="):
-                    self.param_data[param]['line_num'] = i
-                    # Extract the value, handling comments correctly
-                    self.param_data[param]['original_value'] = self._clean_value(line)
-                    break
+                is_comment = bool(mat.group(1))
+                data = self.param_data[param]
+
+                # Handle duplicate parameters - last uncommented line wins
+                if data.line_num is not None:  # We've seen this param before
+                    # If current line is commented but previous wasn't, skip current
+                    if is_comment and data.value != self.COMMENT:
+                        continue
+
+                    # Mark the previous line as superseded
+                    prev_line_num = data.line_num
+                    if data.value != self.COMMENT:
+                        # Comment out the previous uncommented line
+                        self.lines[prev_line_num] = '#' + self.lines[prev_line_num]
+                    self.param_of[prev_line_num] = None
+
+                # Record this line as the current value for this parameter
+                data.line_num = i
+                self.param_of[i] = param
+                data.value = self.COMMENT if is_comment else self._cleanse(mat.group(3))
+
 
     # --- TUI Interaction Methods ---
-
     def get_current_state(self, param: str) -> str:
         """Returns the current effective value or state for a TUI display."""
-        if param not in self.param_data:
-            raise ValueError(f"Unsupported parameter: {param}")
-
-        # If a new value is set, display that (even if it's ACTION_ZAP)
-        if self.param_data[param]['new_value'] is not None:
-            return self.param_data[param]['new_value']
-
-        # Otherwise, display the original value/state
-        return self.param_data[param]['original_value']
+        return self.param_data[param].value
 
     def set_new_value(self, param: str, value: str):
         """Sets a new, legal value (via Cycle/Edit)."""
-        if param not in self.param_data:
-            raise ValueError(f"Unsupported parameter: {param}")
-        # Note: We trust the TUI to pass a clean, legal value (including necessary quotes)
-        self.param_data[param]['new_value'] = value
+        self.param_data[param].new_value = value
 
-    def zap_parameter(self, param: str):
-        """Sets the parameter for removal (via Zap/Reset to Default)."""
-        if param not in self.param_data:
-            raise ValueError(f"Unsupported parameter: {param}")
-        self.param_data[param]['new_value'] = ACTION_ZAP
+    def del_parameter(self, param: str):
+        """Sets the parameter to commented out"""
+        self.param_data[param].new_value = self.COMMENT
 
     # --- File Writing Method ---
-
-    def write_file(self, output_path: Optional[str] = None):
-        """Writes the modified configuration to a new file."""
+    def write_file(self, output_path: Optional[str] = None, use_stdout: bool = False):
+        """Writes the modified configuration to a new file or stdout."""
         output_path = output_path or self.file_path
         new_lines: List[str] = []
-        processed_lines: set[int] = set()
-        
+
         # 1. Process existing lines
-        for i, original_line in enumerate(self.original_lines):
-            line_added = False
-            for param, data in self.param_data.items():
-                if data['line_num'] == i:
-                    processed_lines.add(i)
-                    
-                    new_value = data['new_value']
-                    
-                    if new_value is not None:
-                        # User made a change (Legal Value or Zap)
-                        if new_value == ACTION_ZAP:
-                            # Zap action: Skip the line (i.e., remove it)
-                            line_added = True 
-                            break # Go to next line in original_lines
-                        else:
-                            # Legal Value: Replace the line with the new value
-                            new_lines.append(f"{param}={new_value}\n")
-                            line_added = True
-                            break
-                    else:
-                        # new_value is None: No change, keep the original line
-                        new_lines.append(original_line)
-                        line_added = True
-                        break
-            
-            # If the line was not a supported parameter, keep it
-            if not line_added:
-                 new_lines.append(original_line)
+        for i, line in enumerate(self.lines):
+            param = self.param_of[i]
+            if not param:
+                new_lines.append((' ', line))  # unsupported param or any non-param line
+                continue
+            data = self.param_data[param]
+            new_value = data.new_value
+            if new_value is None:
+                new_lines.append(('=', line))  # unchanged supported param
+                continue
+            assert new_value != self.ABSENT # should not happen
+            if new_value == self.COMMENT:
+                if data.value != self.COMMENT:
+                    line = '#' + line
+                new_lines.append(('~', line))  # commented out param
+                continue
+            new_lines.append(('~', param + '=' + str(new_value) + '\n'))  # changed param
+
 
         # 2. Append new parameters (that were absent in the original file)
         # Note: We append them at the very end of the existing content.
-        
+
         # A simple separator for appended content
-        appended_content_added = False
-        
-        for param, data in self.param_data.items():
-            if data['original_value'] == STATE_ABSENT:
-                new_value = data['new_value']
-                
-                if new_value is not None and new_value != ACTION_ZAP:
-                    # Found a parameter that was ABSENT but is now set to a Legal Value
-                    
-                    if not appended_content_added:
-                        new_lines.append("\n#---# NOTE: New parameters added by 'grub-wiz' below\n")
-                        appended_content_added = True
-                        
-                    # Add your custom guidance text here if desired
-                    new_lines.append(f"{param}={new_value}\n")
+        for param, cfg in self.supported_params.items():
+            data = self.param_data[param]
+            if data.value == self.ABSENT:
+                new_value = data.new_value
 
-        # 3. Write the new content to the file
-        with open(output_path, 'w') as f:
-            f.writelines(new_lines)
-            
-        print(f"Configuration successfully written to {output_path}")
+                if new_value is None or new_value.startswith('#'):
+                    continue
 
-# Example Usage (assuming a file named 'grub_test.cfg' exists)
-# ----------------------------------------------------------------------
-# supported = ["GRUB_TIMEOUT", "GRUB_DEFAULT", "GRUB_CMDLINE_LINUX_DEFAULT", "GRUB_THEME"]
-# grub_file = GrubFile('./grub_test.cfg', supported)
+                # Have a parameter formerly ABSENT now with legal value
+                new_lines.append(('+ ', '\n'))
+                guidance = cfg.get('guidance', '')
+                if guidance:
+                    # Wrap guidance text to 70 chars including '# ' prefix
+                    wrapped_lines = textwrap.wrap(
+                        guidance,
+                        width=68,  # 70 - len('# ') = 68
+                        break_long_words=False,
+                        break_on_hyphens=False
+                    )
+                    for line in wrapped_lines:
+                        new_lines.append(('+', '# ' + line + '\n'))
+                new_lines.append(('+', f"{param}={new_value}\n"))
 
-# # 1. Example modification
-# grub_file.set_new_value("GRUB_TIMEOUT", "5") # Change value
+        # 3. Write the new content to the file or stdout
+        try:
+            if use_stdout:
+                for prefix, line in new_lines:
+                    sys.stdout.write(prefix + '  ' + line)
+            else:
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    for prefix, line in new_lines:
+                        f.write(line)
+                print(f"OK: wrote {output_path!r}")
+            return True
+        except Exception as wr_ex:
+            print(f"ERR: cannot write {output_path!r} [{wr_ex}]")
+            return False
 
-# # 2. Example Zap (Removal)
-# grub_file.zap_parameter("GRUB_DEFAULT") # Remove parameter
 
-# # 3. Example Addition (If GRUB_THEME was absent)
-# grub_file.set_new_value("GRUB_THEME", "/boot/grub/themes/kubuntu")
+def main():
+    """Test the GrubFile class with some example modifications."""
 
-# # Write the changes (use a temporary path for testing!)
-# # grub_file.write_file('./grub_output.cfg')
+    # Define supported parameters with guidance
+    supported_params = {
+        "GRUB_TIMEOUT": {
+            "guidance": "Set the timeout in seconds before the default entry boots. Use -1 to wait indefinitely, 0 to boot immediately."
+        },
+        "GRUB_DEFAULT": {
+            "guidance": "Set the default menu entry to boot. 0 = first entry, 'saved' = last selected entry"
+        },
+        "GRUB_CMDLINE_LINUX_DEFAULT": {
+            "guidance": "Kernel command line arguments for normal boot. Common: quiet splash, nomodeset, etc."
+        },
+        "GRUB_CMDLINE_LINUX": {
+            "guidance": "Kernel command line arguments for all boot modes."
+        },
+        "GRUB_DISABLE_RECOVERY": {
+            "guidance": "Set true to disable generation of recovery mode menu entries"
+        },
+        "GRUB_THEME": {
+            "guidance": "Path to GRUB theme directory. Example: /boot/grub/themes/mytheme"
+        },
+        "GRUB_DISABLE_OS_PROBER": {
+            "guidance": "Set to 'true' to prevent scanning for other operating systems."
+        },
+        "GRUB_IMAGINARY_PARAM": {
+            "guidance": "This is a completely made-up parameter to demonstrate adding a new parameter with guidance text that gets properly wrapped to 70 characters including the comment prefix."
+        }
+    }
+
+    # Read the default grub configuration
+    grub_file = GrubFile('/etc/default/grub', supported_params)
+
+    print("=== Original State ===")
+    for param in supported_params:
+        state = grub_file.get_current_state(param)
+        print(f"{param}: {state}")
+
+    print("\n=== Making Modifications ===")
+
+    # 1. Change timeout
+    grub_file.set_new_value("GRUB_TIMEOUT", "10")
+    print("- Set GRUB_TIMEOUT to 10")
+
+    # 2. Comment out OS_PROBER if present
+    if grub_file.get_current_state("GRUB_DISABLE_OS_PROBER") != grub_file.ABSENT:
+        grub_file.del_parameter("GRUB_DISABLE_OS_PROBER")
+        print("- Commented out GRUB_DISABLE_OS_PROBER")
+
+    # 3. Add theme if absent
+    if grub_file.get_current_state("GRUB_THEME") == grub_file.ABSENT:
+        grub_file.set_new_value("GRUB_THEME", "/boot/grub/themes/custom")
+        print("- Added GRUB_THEME (was absent)")
+
+    # 4. Modify cmdline if present
+    cmdline_state = grub_file.get_current_state("GRUB_CMDLINE_LINUX_DEFAULT")
+    if cmdline_state not in (grub_file.ABSENT, grub_file.COMMENT):
+        grub_file.set_new_value("GRUB_CMDLINE_LINUX_DEFAULT", '"quiet splash nomodeset"')
+        print("- Modified GRUB_CMDLINE_LINUX_DEFAULT")
+
+    # 5. Add imaginary parameter (will always be absent)
+    grub_file.set_new_value("GRUB_IMAGINARY_PARAM", '"test-value"')
+    print("- Added GRUB_IMAGINARY_PARAM (demonstrates guidance wrapping)")
+
+    print("\n=== Modified Output ===\n")
+
+    # Write to stdout
+    grub_file.write_file(use_stdout=True)
+
+if __name__ == '__main__':
+    main()

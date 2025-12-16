@@ -7,6 +7,7 @@ import json
 from types import SimpleNamespace
 from typing import Tuple, Optional
 from copy import deepcopy
+from .GrubFile import GrubFile
 # pylint: disable=line-too-long,invalid-name,too-many-locals
 # pylint: disable=too-many-branches,too-many-statements
 # pylint: disable=too-many-nested-blocks
@@ -190,6 +191,12 @@ class WizValidator:
                 key: param
                 value: list of (severity, message)
         """
+        def exist(value):
+            """Returns True if value is set (not #comment, #absent, or None)"""
+            return value not in (GrubFile.ABSENT, GrubFile.COMMENT, None, '')
+        def avi(value):
+            """Returns value if not void, else '#' (won't match any real GRUB value)"""
+            return value if exist(value) else '#'
         def unquote(value):
             if isinstance(value, str):
                 if value.startswith("'"):
@@ -231,59 +238,59 @@ class WizValidator:
 
         # if _DEFAULT is saved, then _SAVEDEFAULT must be true
         p1, v1, p2, v2 = getvals('GRUB_DEFAULT', 'GRUB_SAVEDEFAULT')
-        bad = p1 and v1 in quotes('saved') and v2 not in quotes('true')
+        bad = p1 and avi(v1) in quotes('saved') and avi(v2) not in quotes('true')
         hey_if(bad, p2, 4, f'must be "true" since {sh(p1)} is "saved"')
 
         # TIMEOUT=0 & TIMEOUT_STYLE=hidden (critical - unrecoverable state)
         p1, v1, p2, v2 = getvals('GRUB_TIMEOUT', 'GRUB_TIMEOUT_STYLE')
-        bad = p1 and (v1 in quotes('0') or v1 in quotes('0.0')) and v2 in quotes('hidden')
+        bad = p1 and (avi(v1) in quotes('0') or avi(v1) in quotes('0.0')) and avi(v2) in quotes('hidden')
         hey_if(bad, p1, 4, f'should be positive int when {sh(p2)}="hidden"')
 
         # TIMEOUT > 0 but TIMEOUT_STYLE is NOT menu
         p1, v1, p2, v2 = getvals('GRUB_TIMEOUT', 'GRUB_TIMEOUT_STYLE')
         is_positive = False
         try:
-            is_positive = p1 and float(unquote(v1)) > 0
+            is_positive = p1 and exist(v1) and float(unquote(v1)) > 0
         except (ValueError, TypeError):
             pass
-        bad = is_positive and v2 not in quotes('menu')
+        bad = is_positive and avi(v2) not in quotes('menu')
         hey_if(bad, p2, 4, f'should be "menu" when {sh(p1)} > 0')
 
         # 'quiet' belongs only in GRUB_CMDLINE_LINUX_DEFAULT
         p1, v1, p2, v2 = getvals('GRUB_CMDLINE_LINUX_DEFAULT', 'GRUB_CMDLINE_LINUX')
-        bad = p2 and 'quiet' in v2
+        bad = p2 and 'quiet' in avi(v2)
         hey_if(bad, p2, 3, f'"quiet" belongs only in {sh(p1)}')
 
         # 'splash' belongs only in GRUB_CMDLINE_LINUX_DEFAULT
         p1, v1, p2, v2 = getvals('GRUB_CMDLINE_LINUX_DEFAULT', 'GRUB_CMDLINE_LINUX')
-        bad = p2 and 'splash' in v2
+        bad = p2 and 'splash' in avi(v2)
         hey_if(bad, p2, 3, f'"splash" belongs only in {sh(p1)}')
 
         # LUKS active but no rd.luks.uuid in GRUB_CMDLINE_LINUX
         p1, v1 = getvals('GRUB_CMDLINE_LINUX')
-        bad = p1 and layout.is_luks_active and 'rd.luks.uuid=' not in v1
+        bad = p1 and layout.is_luks_active and 'rd.luks.uuid=' not in avi(v1)
         hey_if(bad, p1, 3, 'no "rd.luks.uuid=" but LUKS seems active')
 
         # LVM active but no rd.lvm.vg in GRUB_CMDLINE_LINUX
         p1, v1 = getvals('GRUB_CMDLINE_LINUX')
-        bad = p1 and layout.is_lvm_active and 'rd.lvm.vg=' not in v1
+        bad = p1 and layout.is_lvm_active and 'rd.lvm.vg=' not in avi(v1)
         hey_if(bad, p1, 3, 'no "rd.lvm.vg=" but LVM seems active')
 
         # ENABLE_CRYPTODISK without LUKS
         p1, v1 = getvals('GRUB_ENABLE_CRYPTODISK')
-        bad = p1 and v1 in quotes('true') and not layout.is_luks_active
+        bad = p1 and avi(v1) in quotes('true') and not layout.is_luks_active
         hey_if(bad, p1, 1, 'enabled but no LUKS encryption detected')
 
         # Recovery cmdline set but recovery disabled
         p1, v1, p2, v2 = getvals('GRUB_CMDLINE_LINUX_RECOVERY', 'GRUB_DISABLE_RECOVERY')
-        bad = p1 and v1 and v2 in quotes('true')
+        bad = p1 and avi(v1) and avi(v2) in quotes('true')
         hey_if(bad, p1, 2, f'set but {sh(p2)}="true" disables recovery mode')
 
         # UUID types disabled (both or individually)
         p1, v1, p2, v2 = getvals('GRUB_DISABLE_LINUX_UUID', 'GRUB_DISABLE_LINUX_PARTUUID')
-        both_disabled = p1 and v1 in quotes('true') and v2 in quotes('true')
-        only_p1 = p1 and v1 in quotes('true') and v2 not in quotes('true')
-        only_p2 = p2 and v2 in quotes('true') and v1 not in quotes('true')
+        both_disabled = p1 and avi(v1) in quotes('true') and avi(v2) in quotes('true')
+        only_p1 = p1 and avi(v1) in quotes('true') and avi(v2) not in quotes('true')
+        only_p2 = p2 and avi(v2) in quotes('true') and avi(v1) not in quotes('true')
         hey_if(both_disabled, p1, 2, 'using device names for everything is fragile')
         hey_if(both_disabled, p2, 2, 'using device names for everything is fragile')
         hey_if(only_p1, p1, 1, 'disabling UUID may cause boot issues')
@@ -291,88 +298,107 @@ class WizValidator:
 
         # Terminal INPUT should match OUTPUT when serial
         p1, v1, p2, v2 = getvals('GRUB_TERMINAL_INPUT', 'GRUB_TERMINAL_OUTPUT')
-        val_in = unquote(v1) if v1 else 'console'
-        val_out = unquote(v2) if v2 else ''
-        bad = p1 and val_out and val_in != val_out and 'serial' in val_out
+        val_in = unquote(avi(v1)) if exist(v1) else 'console'
+        val_out = unquote(avi(v2)) if exist(v2) else ''
+        bad = p1 and exist(v1) and val_out and val_in != val_out and 'serial' in val_out
         hey_if(bad, p1, 2, f'should match {sh(p2)} when it is "serial"')
 
         # Terminal OUTPUT should match INPUT when serial
         p1, v1, p2, v2 = getvals('GRUB_TERMINAL_INPUT', 'GRUB_TERMINAL_OUTPUT')
-        val_in = unquote(v1) if v1 else 'console'
-        val_out = unquote(v2) if v2 else ''
-        bad = p2 and val_out and val_in != val_out and 'serial' in val_in
+        val_in = unquote(avi(v1)) if exist(v1) else 'console'
+        val_out = unquote(avi(v2)) if exist(v2) else ''
+        bad = p2 and exist(v2) and val_out and val_in != val_out and 'serial' in val_in
         hey_if(bad, p2, 2, f'should match {sh(p1)} when it is "serial"')
 
         # SERIAL_COMMAND set but neither terminal is serial
         p1, v1, p2, v2, p3, v3 = getvals('GRUB_SERIAL_COMMAND', 'GRUB_TERMINAL_INPUT', 'GRUB_TERMINAL_OUTPUT')
-        term_in = unquote(v2) if v2 else 'console'
-        term_out = unquote(v3) if v3 else ''
-        bad = p1 and v1 and 'serial' not in term_out and 'serial' not in term_in
+        term_in = unquote(avi(v2)) if exist(v2) else 'console'
+        term_out = unquote(avi(v3)) if exist(v3) else ''
+        bad = p1 and exist(v1) and 'serial' not in term_out and 'serial' not in term_in
         hey_if(bad, p1, 2, f'set but neither {sh(p2)} or {sh(p3)} are "serial"')
 
         # TERMINAL_INPUT is serial but no SERIAL_COMMAND
         p1, v1, p2, v2 = getvals('GRUB_SERIAL_COMMAND', 'GRUB_TERMINAL_INPUT')
-        term_in = unquote(v2) if v2 else 'console'
-        bad = p2 and 'serial' in term_in and not v1
+        term_in = unquote(avi(v2)) if exist(v2) else 'console'
+        bad = p2 and 'serial' in term_in and not exist(v1)
         hey_if(bad, p2, 2, f'"serial" requires {sh(p1)} to be set')
 
         # TERMINAL_OUTPUT is serial but no SERIAL_COMMAND
         p1, v1, p2, v2 = getvals('GRUB_SERIAL_COMMAND', 'GRUB_TERMINAL_OUTPUT')
-        term_out = unquote(v2) if v2 else ''
-        bad = p2 and 'serial' in term_out and not v1
+        term_out = unquote(avi(v2)) if exist(v2) else ''
+        bad = p2 and 'serial' in term_out and not exist(v1)
         hey_if(bad, p2, 2, f'"serial" requires {sh(p1)} to be set')
+
+        # GRUB_TERMINAL contains serial but no SERIAL_COMMAND
+        p1, v1, p2, v2 = getvals('GRUB_SERIAL_COMMAND', 'GRUB_TERMINAL')
+        terminal = unquote(avi(v2))
+        bad = p2 and 'serial' in terminal and not exist(v1)
+        hey_if(bad, p2, 2, f'"serial" requires {sh(p1)} to be configured')
+
+        # GRUB_TERMINAL=console with graphical settings (GFXMODE, BACKGROUND, THEME)
+        p1, v1, p2, v2, p3, v3, p4, v4 = getvals('GRUB_TERMINAL', 'GRUB_GFXMODE', 'GRUB_BACKGROUND', 'GRUB_THEME')
+        terminal = unquote(avi(v1))
+        has_gfx = (p2 and exist(v2)) or (p3 and exist(v3)) or (p4 and exist(v4))
+        bad = p1 and terminal == 'console' and has_gfx
+        hey_if(bad, p1, 1, 'console mode ignores graphical settings')
+
+        # GRUB_TERMINAL contains gfxterm but GFXMODE not set
+        p1, v1, p2, v2 = getvals('GRUB_TERMINAL', 'GRUB_GFXMODE')
+        terminal = unquote(avi(v1))
+        bad = p1 and 'gfxterm' in terminal and not exist(v2)
+        hey_if(bad, p1, 1, f'gfxterm works better with {sh(p2)} set')
 
         # SAVEDEFAULT=true but DEFAULT is numeric (menu can reorder)
         p1, v1, p2, v2 = getvals('GRUB_SAVEDEFAULT', 'GRUB_DEFAULT')
-        default_value = v2 if v2 else '0'
-        bad = p1 and v1 in quotes('true') and unquote(default_value).isdigit()
+        default_value = avi(v2) if exist(v2) else '0'
+        bad = p1 and avi(v1) in quotes('true') and unquote(default_value).isdigit()
         hey_if(bad, p2, 1, f'avoid numeric when {sh(p1)}="true"')
 
         # GRUB_CMDLINE_LINUX has spaces but not quoted
         p1, v1 = getvals('GRUB_CMDLINE_LINUX')
-        bad = p1 and v1 is not None and ' ' in v1 and v1 not in quotes(unquote(v1))
+        bad = p1 and ' ' in avi(v1) and avi(v1) not in quotes(unquote(avi(v1)))
         hey_if(bad, p1, 2, 'has spaces and thus must be quoted')
 
         # GRUB_CMDLINE_LINUX_DEFAULT has spaces but not quoted
         p1, v1 = getvals('GRUB_CMDLINE_LINUX_DEFAULT')
-        bad = p1 and v1 is not None and ' ' in v1 and v1 not in quotes(unquote(v1))
+        bad = p1 and ' ' in avi(v1) and avi(v1) not in quotes(unquote(avi(v1)))
         hey_if(bad, p1, 2, 'has spaces and thus must be quoted')
 
         # GRUB_BACKGROUND path doesn't exist
         p1, v1 = getvals('GRUB_BACKGROUND')
-        exists, _ = self.get_full_path_and_check_existence(v1) if v1 else (True, '')
-        bad = p1 and v1 and not exists
+        exists, _ = self.get_full_path_and_check_existence(v1) if exist(v1) else (True, '')
+        bad = p1 and exist(v1) and not exists
         hey_if(bad, p1, 2, 'path does not seem to exist')
 
         # GRUB_THEME path doesn't exist
         p1, v1 = getvals('GRUB_THEME')
-        exists, _ = self.get_full_path_and_check_existence(v1) if v1 else (True, '')
-        bad = p1 and v1 and not exists
+        exists, _ = self.get_full_path_and_check_existence(v1) if exist(v1) else (True, '')
+        bad = p1 and exist(v1) and not exists
         hey_if(bad, p1, 2, 'path does not seem to exist')
 
         # GFXMODE set but not a known safe value
         p1, v1 = getvals('GRUB_GFXMODE')
         safe_modes = {'640x480', '800x600', '1024x768', 'auto', 'keep'}
-        modes = [m.strip().lower() for m in unquote(v1).split(',')] if v1 else []
+        modes = [m.strip().lower() for m in unquote(v1).split(',')] if exist(v1) else []
         unsafe_modes = [m for m in modes if m not in safe_modes]
-        bad = p1 and v1 and len(unsafe_modes) > 0
+        bad = p1 and exist(v1) and len(unsafe_modes) > 0
         hey_if(bad, p1, 1, 'perhaps unsupported; stick to common values')
 
         # GRUB_DISTRIBUTOR missing or empty (not a shell command)
         p1, v1 = getvals('GRUB_DISTRIBUTOR')
-        val = v1 if v1 else ''
+        val = v1 if exist(v1) else ''
         is_shell_cmd = val.startswith('$(') or val.startswith('`')
-        bad = p1 and ((val and not is_shell_cmd and not val.strip()) or not val)
+        bad = p1 and exist(v1) and ((val and not is_shell_cmd and not val.strip()) or not val)
         hey_if(bad, p1, 2, 'should be distro name (it is missing/empty)')
 
         # OS-PROBER disabled on dual-boot system
         p1, v1 = getvals('GRUB_DISABLE_OS_PROBER')
-        bad = p1 and v1 in quotes('true') and layout.has_another_os
+        bad = p1 and avi(v1) in quotes('true') and layout.has_another_os
         hey_if(bad, p1, 2, 'suggest setting "false" since multi-boot detected')
 
         # OS-PROBER enabled but no multi-boot detected
         p1, v1 = getvals('GRUB_DISABLE_OS_PROBER')
-        bad = p1 and v1 not in quotes('true') and not layout.has_another_os
+        bad = p1 and exist(v1) and v1 not in quotes('true') and not layout.has_another_os
         hey_if(bad, p1, 1, 'perhaps set "true" since no multi-boot detected?')
 
         # Check parameters with fixed list of possible values (enums)
@@ -383,7 +409,7 @@ class WizValidator:
             has_no_regex = not regex or (isinstance(regex, (list, dict)) and len(regex) == 0)
 
             p1, v1 = getvals(param_name)
-            if p1 and has_enums and has_no_regex:
+            if p1 and exist(v1) and has_enums and has_no_regex:
                 value = str(unquote(v1))
                 found = any(value == unquote(str(k)) for k in enums.keys())
                 bad = not found
@@ -391,14 +417,14 @@ class WizValidator:
 
         # GRUB_TIMEOUT over recommended limit
         p1, v1 = getvals('GRUB_TIMEOUT')
-        val = str(unquote(v1)) if v1 else ''
-        bad = p1 and val and val.isdigit() and int(val) > 60
+        val = str(unquote(v1)) if exist(v1) else ''
+        bad = p1 and exist(v1) and val and val.isdigit() and int(val) > 60
         hey_if(bad, p1, 1, 'over 60s seems ill advised')
 
         # GRUB_RECORDFAIL_TIMEOUT over recommended limit
         p1, v1 = getvals('GRUB_RECORDFAIL_TIMEOUT')
-        val = str(unquote(v1)) if v1 else ''
-        bad = p1 and val and val.isdigit() and int(val) > 120
+        val = str(unquote(v1)) if exist(v1) else ''
+        bad = p1 and exist(v1) and val and val.isdigit() and int(val) > 120
         hey_if(bad, p1, 1, 'over 120s seems ill advised')
 
         return warns, all_warn_keys
