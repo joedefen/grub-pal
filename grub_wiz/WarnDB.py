@@ -14,10 +14,11 @@ yaml = YAML()
 yaml.default_flow_style = False
 
 
-class WizHider:
+class WarnDB:
     """
-    Manages the persistent storage and state for hidden parameters
-    and hidden/suppressed warnings.
+    Manages the persistent storage and state for the warnings database.
+    Stores all warning info with severity levels and tracks which warnings
+    are suppressed (inhibited).
     """
 
     def __init__(self, param_cfg,
@@ -36,22 +37,19 @@ class WizHider:
         self.param_cfg = param_cfg # has out-of-box state
 
         # self.params: Set[str] = set()  # hidden params (excluded from everything)
-        self.warns: Set[str] = set()   # Suppressed warnings (e.g., 'GRUB_DEFAULT.3')
+        self.warns: Set[str] = set()   # Suppressed/inhibited warnings (keys)
+        self.all_info: Dict[str, int] = {}  # All warning info: key -> severity (1-4)
         self.dirty_count: int = 0
         self.last_read_time: Optional[float] = None
+        self.audited: bool = False  # Track if audit_info() has been called
 
         # Suck up the file on startup (initial refresh)
         # Note: config_dir is already created by UserConfigDir
         self.refresh()
 
     def init_hides(self):
-        """ From the (simplified) configuration, create
-        the list of out-of-the-box hidden parameter."""
-        for param_name, cfg in self.param_cfg.items():
-            hide = cfg.get('hide', False)
-            if hide:
-                self.hide_param(param_name)
-        self.write_if_dirty()
+        """ Initialize warns database (no longer used for params). """
+        # No initialization needed - warns are populated dynamically
         return True
 
     def refresh(self):
@@ -136,11 +134,36 @@ class WizHider:
             self.warns.remove(composite_id)
             self.dirty_count += 1
 
-    def purge_orphan_keys(self, all_warn_keys: set):
-        """ Remove any keys no longer of valid """
+    def audit_info(self, all_warn_info: dict):
+        """
+        Update the warning database with current validation info.
+        Should only be called once per instantiation.
+
+        Args:
+            all_warn_info: Dict mapping warning keys to severity levels (1-4)
+
+        Actions:
+        - Updates all_info with current warnings and severities
+        - Removes orphaned keys from suppressed warnings list
+        - Updates severity if changed
+        """
+        if self.audited:
+            return  # Already audited this session
+
+        self.audited = True
+
+        # Update all_info with new data
+        self.all_info = all_warn_info.copy()
+
+        # Purge orphaned suppressed warnings
+        orphans = []
         for key in self.warns:
-            if key not in all_warn_keys:
-                self.warns.discard(key)
+            if key not in all_warn_info:
+                orphans.append(key)
+
+        for key in orphans:
+            self.warns.discard(key)
+            self.dirty_count += 1
 
 #   def is_hidden_param(self, name: str) -> bool:
 #       """Checks if a parameter should be hidden."""

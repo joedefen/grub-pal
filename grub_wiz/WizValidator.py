@@ -225,15 +225,16 @@ class WizValidator:
             return tuple([None] * (num_keys * 2))
 
         def hey_if(bad, param_name, severity, message):
-            nonlocal all_warn_keys
+            nonlocal all_warn_info
             if bad:
                 hey(param_name, severity, message)
             if param_name:
-                all_warn_keys.add(f'{param_name} {message}')
+                key = f'{param_name}: {message}'
+                all_warn_info[key] = severity
         # ------------------------------------------------ #
 
         stars = [''] + '* ** *** ****'.split()
-        warns, all_warn_keys = {}, set()
+        warns, all_warn_info = {}, {}
         layout = self.probe_disk_layout()
 
         # if _DEFAULT is saved, then _SAVEDEFAULT must be true
@@ -427,7 +428,7 @@ class WizValidator:
         bad = p1 and exist(v1) and val and val.isdigit() and int(val) > 120
         hey_if(bad, p1, 1, 'over 120s seems ill advised')
 
-        return warns, all_warn_keys
+        return warns, all_warn_info
 
     def demo(self, param_defaults):
         """ TBD """

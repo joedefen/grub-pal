@@ -1,60 +1,26 @@
 #!/usr/bin/env python3
 r"""
     grub-wiz: the help grub file editor assistant
+    
+1. WARNING Screen
+    Exhaustive view of ALL validation checks (not just triggered ones)
+    Launched from REVIEW screen
+    Flat list: param_name, severity (1-4 stars), warning_text, state (triggered/inhibited)
+    Filterable and sortable
+    X-key toggle to inhibit/allow individual warnings
+    Already done: WarnDB refactoring, all_warn_info with severity
+2. [m]ore Key - Extended Options Header
+    Toggle visibility of third header line on REVIEW, EDIT, RESTORE screens
+    Shows additional keys: warning-db, restore, expert-edit, header-style
+    Keys work whether visible or not (pure progressive disclosure)
+    Pushes existing second header line down when active
+3. Backup Comparison (RESTORE screen)
+    REF/BASE column - exclusive designation for one backup file
+    Key to set/unset REF on selected backup
+    [c]ompare key - shows param-by-param diff between selected backup and REF
+    Only displays changed params (value changes or comment status changes)
+    Format: PARAM: old_value → new_value
 
-⏳ X-param redo feature (dynamic inactive params based on grub file state)
-  Update UI logic to show/hide based on uncommented vs commented/absent
-  Hide Empty Sections
-  Implement X-key toggle with push/pop memory
-  Update write logic to only write active params
-  Add "Unvalidated Parameters" section to display
-
---------- PREVIOUS FULLER TODO List
-
-==== Feature 1: X-Param Redo (Dynamic Inactive Params)
-Core Concept:
-    Show params = uncommented params in /etc/default/grub (what's actually active)
-    ✘-params = commented out OR supported-but-absent params
-Three States:
-    Active: TIMEOUT = 0 (uncommented in grub file)
-    ✘∎: ✘ TIMEOUT ∎ = 0 (commented: #GRUB_TIMEOUT=0)
-    ✘≡: ✘ DEFAULT ≡ (absent from grub file entirely)
-X Key Behavior:
-    Toggles param between active ↔ original-state
-    Push/pop memory during session (can toggle back and forth)
-    Original state: ✘∎ if was commented, ✘≡ if was absent
-    Edits preserved in memory while toggling, but lost on write if param ends up inactive
-Write Behavior:
-    Only write active (uncommented) params
-    Never write commented params
-    Never add absent params as comments
-    Discard any edits to params that are inactive at write time
-UI:
-    s:show/hide toggle for displaying ✘-params
-    Remove del command (X handles everything)
-    X-param state derived fresh from grub file each load (not persisted separately)
-
-==== Feature 2: Unvalidated Parameters (Adopt Unknown Params)
-Core Concept:
-    Parse /etc/default/grub for ANY param matching ^#?GRUB_[A-Z_0-9]+\s*=.*
-    Adopt params not in canned_config.yaml with minimal validation
-# Config for Unvalidated Params:
-#   regex: ".*" (permissive, no validation)
-#   enum: null (no dropdown)
-#   guidance: extracted from comment block above param in grub file
-# Guidance Extraction:
-#   Collect consecutive # ... lines immediately above param
-#   Strip # and leading space from each line
-#   Preserve hard newlines between lines (don't concatenate)
-#   Stop at blank line or non-comment line
-Display:
-    New section: "Unvalidated Parameters" at bottom (after Security & Advanced)
-    Fully editable like any other param
-    No validation/enum guardrails
-# Benefit:
-#   See and edit entire grub file, not just known params
-#   Handle custom/distro-specific/experimental options
-#   No data loss
 """
 # pylint: disable=invalid-name,broad-exception-caught
 # pylint: disable=too-many-locals,too-few-public-methods,too-many-branches
@@ -79,7 +45,7 @@ from .CannedConfig import CannedConfig
 from .GrubFile import GrubFile
 from .GrubCfgParser import get_top_level_grub_entries
 from .BackupMgr import BackupMgr, GRUB_DEFAULT_PATH
-from .WizHider import WizHider
+from .WarnDB import WarnDB
 from .GrubWriter import GrubWriter
 from .WizValidator import WizValidator
 from .ParamDiscovery import ParamDiscovery
@@ -207,8 +173,6 @@ class GrubWiz:
         self.spins = None
         self.sections = None
         self.param_cfg = None
-        self.positions = None
-        self.seen_positions = None
         self.hidden_stats = None
         self.prev_pos = None
         self.defined_param_names = None # all of them
@@ -241,7 +205,6 @@ class GrubWiz:
     def _reinit(self):
         """ Call to initialize or re-initialize with new /etc/default/grub """
         self.param_cfg = {}
-        self.positions = []
         self.param_values, self.prev_values = {}, {}
         self.saved_active_param_values = {}
         self.param_defaults = {}
@@ -250,32 +213,18 @@ class GrubWiz:
         self.sections = CannedConfig().data
 
         names = []
-        for idx, (section, params) in enumerate(self.sections.items()):
+        for params in self.sections.values():
             for name in params.keys():
                 names.append(name)
         absent_param_names = set(self.param_discovery.get_absent(names))
         self.defined_param_names = names
 
-        # -----------------------
-        def setup_section(idx, section, params):
-            nonlocal self
-            if idx > 0: # blank line before sections except 1st
-                self.positions.append( SimpleNamespace(
-                    param_name=None, section_name=' '))
-            self.positions.append( SimpleNamespace(
-                param_name=None, section_name=section))
+        # Build param_cfg, excluding absent params
+        for params in self.sections.values():
             for param_name, cfg in params.items():
-                if param_name in absent_param_names:
-                    continue
-                self.param_cfg[param_name] = cfg
-                self.positions.append(SimpleNamespace(
-                    param_name=param_name, section_name=None))
-                self.param_defaults[param_name
-                            ] = self.param_cfg[param_name]['default']
-        # -----------------------
-
-        for idx, (section, params) in enumerate(self.sections.items()):
-            setup_section(idx, section, params)
+                if param_name not in absent_param_names:
+                    self.param_cfg[param_name] = cfg
+                    self.param_defaults[param_name] = cfg['default']
         if self.wiz_validator is None:
             self.wiz_validator = WizValidator(self.param_cfg)
 
@@ -286,8 +235,9 @@ class GrubWiz:
             extras = {}
             for extra, cfg in self.grub_file.extra_params.items():
                 extras[extra] = cfg
+                self.param_cfg[extra] = cfg
+                self.param_defaults[extra] = cfg['default']
             self.sections[section_name] = extras
-            setup_section(len(self.sections)-1, section_name, extras)
         self.param_names = list(self.param_cfg.keys())
         self.prev_pos = -1024  # to detect direction
 
@@ -304,7 +254,7 @@ class GrubWiz:
             self.param_cfg['GRUB_DEFAULT']['enums'].update(self.menu_entries)
         except Exception:
             pass
-        self.hider = WizHider(param_cfg=self.param_cfg)
+        self.hider = WarnDB(param_cfg=self.param_cfg)
 
     def get_tab(self):
         """ get the tab positions of the print cols """
@@ -355,9 +305,6 @@ class GrubWiz:
         """ TBD"""
         enums, regex, param_name, value = None, None, None, None
         pos = self.win.pick_pos
-#       if self.ss.is_curr(HOME_ST):
-#           if self.seen_positions and 0 <= pos < len(self.seen_positions):
-#               param_name = self.seen_positions[pos].param_name
         if self.ss.is_curr((REVIEW_ST, HOME_ST)):
             if self.clues and 0 <= pos < len(self.clues):
                 clue = self.clues[pos]
@@ -459,8 +406,8 @@ class GrubWiz:
         reviews = {}
         self.hidden_stats = SimpleNamespace(param=0, warn=0)
         diffs = self.get_diffs()
-        warns, all_warn_keys = self.wiz_validator.make_warns(self.param_values)
-        self.hider.purge_orphan_keys(all_warn_keys) # TODO: just run this once?
+        warns, all_warn_info = self.wiz_validator.make_warns(self.param_values)
+        self.hider.audit_info(all_warn_info)
         if self.must_reviews is None:
             self.must_reviews = set()
         for param_name in list(diffs.keys()):
@@ -785,52 +732,64 @@ class GrubWiz:
         self.hidden_stats = SimpleNamespace(param=0, warn=0)
         win = self.win # short hand
         picked = win.pick_pos
-        emits = []
-        #view_size = win.scroll_view_size
         found_current = False
-        self.seen_positions = []
         self.clues = []
-        for ns in self.positions:
-            self.hidden_stats.param += int(not self.is_active_param(ns.param_name))
-            if (not ns.param_name or self.show_hidden_params
-                    or self.is_active_param(ns.param_name)):
-                self.seen_positions.append(ns)
-        for pos, ns in enumerate(self.seen_positions):
-            if ns.section_name == ' ':
-                win.add_body(f'{ns.section_name}')
+        first_visible_section = True
+
+        # Iterate through sections directly, hiding empty ones
+        for section_name, params in self.sections.items():
+            # Collect visible params for this section
+            visible_params = []
+            for param_name in params.keys():
+                if param_name not in self.param_cfg:
+                    continue  # Param was filtered out (absent from system)
+                if self.show_hidden_params or self.is_active_param(param_name):
+                    visible_params.append(param_name)
+                else:
+                    self.hidden_stats.param += 1
+
+            # Skip empty sections when in compact mode (hiding params)
+            if not visible_params and not self.show_hidden_params:
+                continue
+
+            # Add blank line before sections (except first visible section)
+            if not first_visible_section:
+                win.add_body(' ')
                 self.clues.append(Clue('nop'))
-                continue
-            if ns.section_name:
-                win.add_body(f'[{ns.section_name}]')
-                self.clues.append(Clue('nop'))
-                continue
+            first_visible_section = False
 
-            param_name = ns.param_name
-            is_current = bool(picked == pos)
-            param_lines = self.body_param_lines(param_name, is_current)
-            if pos != picked:
-                line = param_lines[0]
-                if len(param_lines) > 1:
-                    line = line[:self.win.cols-2] + '⯈'
-                win.add_body(line)
-                self.clues.append(Clue('param', param_name))
-                continue
-            found_current = True
-            # cfg = self.param_cfg[param_name]
-            # value = self.param_values[param_name]
-            emits += param_lines
+            # Add section header
+            win.add_body(f'[{section_name}]')
+            self.clues.append(Clue('nop'))
 
-            emits += self.drop_down_lines(param_name)
+            # Add visible params
+            for param_name in visible_params:
+                pos = len(self.clues)
+                is_current = bool(picked == pos)
+                param_lines = self.body_param_lines(param_name, is_current)
 
-            # truncate the lines to show to all that fit..
-            view_size = win.scroll_view_size
-            if len(emits) > view_size:
-                hide_cnt = 1 + len(emits) - view_size
-                emits = emits[0:view_size-1]
-                emits.append(f'... beware: {hide_cnt} HIDDEN lines ...')
-            for emit in emits:
-                win.add_body(emit)
-            self.clues.append(Clue('param', param_name, len(emits)))
+                if pos != picked:
+                    line = param_lines[0]
+                    if len(param_lines) > 1:
+                        line = line[:win.cols-2] + '⯈'
+                    win.add_body(line)
+                    self.clues.append(Clue('param', param_name))
+                    continue
+
+                found_current = True
+                emits = param_lines + self.drop_down_lines(param_name)
+
+                # Truncate if exceeds view size
+                view_size = win.scroll_view_size
+                if len(emits) > view_size:
+                    hide_cnt = 1 + len(emits) - view_size
+                    emits = emits[0:view_size-1]
+                    emits.append(f'... beware: {hide_cnt} HIDDEN lines ...')
+
+                for emit in emits:
+                    win.add_body(emit)
+                self.clues.append(Clue('param', param_name, len(emits)))
+
         return found_current
 
     def drop_down_lines(self, param_name):
@@ -878,6 +837,13 @@ class GrubWiz:
 
     def edit_param(self, win, name, regex):
         """ Prompt user for answer until gets it right"""
+        from .CannedConfig import EXPERT_EDIT
+
+        # Check if this param uses EXPERT_EDIT mode
+        if regex == EXPERT_EDIT or regex == EXPERT_EDIT[0]:
+            self.expert_edit_param(win, name)
+            return
+
         value = self.param_values[name]
         valid = False
         hint, pure_regex = '', ''
@@ -892,9 +858,18 @@ class GrubWiz:
             if value is None: # aborted
                 return
             valid = True # until proven otherwise
+
+            # First check regex if provided
             if regex and not re.match(regex, str(value)):
                 valid, hint = False, f'must match: {pure_regex}'
                 win.flash('Invalid input - please try again', duration=1.5)
+                continue
+
+            # Also validate as shell token for safety (regexes can be permissive)
+            if value and not self._is_valid_shell_token(value):
+                valid = False
+                hint = 'must be valid shell token (check quoting)'
+                win.flash('Invalid shell token - check quoting', duration=1.5)
 
         self.param_values[name] = value
 
@@ -1127,13 +1102,11 @@ class GrubWiz:
                 name, _, enums, regex = '', None, {}, ''
                 if self.ss.is_curr((HOME_ST, REVIEW_ST)):
                     name, _, enums, regex, _ = self._get_enums_regex()
-                if self.ss.act_in('escape', (REVIEW_ST, RESTORE_ST, VIEW_ST)):
+                if self.ss.act_in('escape', (REVIEW_ST, RESTORE_ST, VIEW_ST, HELP_ST)):
                     if self.ss.stack:
                         self.prev_pos = self.ss.pop()
                         self.must_reviews = None  # Reset cached review data
                         self.bak_lines, self.bak_path = None, None
-                if spins.help_mode:
-                    spins.help_mode = True
                 if self.ss.act_in('help_mode', (HOME_ST, REVIEW_ST, RESTORE_ST)):
                     self.prev_pos = self.ss.push(HELP_ST, self.prev_pos)
 

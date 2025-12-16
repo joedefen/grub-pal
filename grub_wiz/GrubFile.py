@@ -228,6 +228,9 @@ class GrubFile:
                 continue
             assert new_value != self.ABSENT # should not happen
             if new_value == self.COMMENT:
+                # Don't write commented lines for originally absent params
+                if data.value == self.ABSENT:
+                    continue
                 if data.value != self.COMMENT:
                     line = '#' + line
                 new_lines.append(('~', line))  # commented out param
@@ -244,7 +247,7 @@ class GrubFile:
             if data.value == self.ABSENT:
                 new_value = data.new_value
 
-                if new_value is None or new_value.startswith('#'):
+                if new_value is None or new_value == self.COMMENT:
                     continue
 
                 # Have a parameter formerly ABSENT now with legal value
