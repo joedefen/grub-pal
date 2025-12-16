@@ -21,11 +21,16 @@ GrubFile:
         - param=value
 """
 # pylint: disable=line-too-long,broad-exception-caught
+# pylint: disable=too-many-branches
 import sys
 import re
 import textwrap
 from typing import List, Dict, Optional, Any #, Union
 from types import SimpleNamespace
+try:
+    from .CannedConfig import CannedConfig
+except Exception:
+    from CannedConfig import CannedConfig
 
 
 class GrubFile:
@@ -49,6 +54,8 @@ class GrubFile:
         self.param_of: List[Optional[str]] = []
         # Structure: {PARAM: {'line_num': int/None, 'value': str, 'new_value': str/None}}
         self.param_data: Dict[str, Dict[str, Any]] = {}
+        # Unvalidated params discovered in grub file
+        self.extra_params: Dict[str, Dict[str, Any]] = {}
 
         self.read_file()
 
@@ -56,7 +63,12 @@ class GrubFile:
         """Pre-fills the data structure with all supported params set to ABSENT."""
         for param in self.supported_params:
             self.param_data[param] = SimpleNamespace(
-                line_num=None, value=self.ABSENT, new_value=None,)
+                line_num=None,
+                value=self.ABSENT, # current value unless parameter in file
+                                   # or parameter is in comment (then self.COMMENT)
+                new_value=None,    # updated value by user (later)
+                out_value=None,    # value if in comment (and .value==self.COMMENT)
+                )
 
     # --- Core Parsing Methods ---
 
@@ -86,6 +98,28 @@ class GrubFile:
         # Clip the string at the comment index and strip trailing whitespace
         return value_part[:comment_index].rstrip()
 
+    def _collect_guidance(self, line_index: int) -> str:
+        """
+        Collects guidance from consecutive comment lines immediately above the given line.
+        Preserves hard newlines between comment lines.
+
+        Returns: Multi-line string with # stripped from each line, or empty string if no comments found.
+        """
+        guidance_lines = []
+        idx = line_index - 1
+
+        while idx >= 0:
+            line = self.lines[idx].strip()
+            # Stop at blank line or non-comment line
+            if not line or not line.startswith('#'):
+                break
+            # Strip # and any leading space after it
+            comment_text = line[1:].lstrip()
+            guidance_lines.insert(0, comment_text)
+            idx -= 1
+
+        return '\n'.join(guidance_lines)
+
     def read_file(self):
         """Reads the GRUB file and populates the internal data structures."""
         try:
@@ -105,32 +139,58 @@ class GrubFile:
             if not line:
                 continue
 
-            mat = re.match(r"\s*(#)?\s*(GRUB_\w+)\s*=(.*)$", line)
-            if mat:
-                param = mat.group(2)
-                if param not in self.supported_params:
-                    continue  # Not a supported parameter
+            mat = re.match(r"\s*(#)?\s*(GRUB_[A-Z]+(_[A-Z]+)*)\s*=(.*)$", line)
+            if not mat:
+                continue # not a line with a parameter (commented out or not)
 
-                is_comment = bool(mat.group(1))
-                data = self.param_data[param]
+            param = mat.group(2)
+            is_comment = bool(mat.group(1))
+            value_part = mat.group(4)
 
-                # Handle duplicate parameters - last uncommented line wins
-                if data.line_num is not None:  # We've seen this param before
-                    # If current line is commented but previous wasn't, skip current
-                    if is_comment and data.value != self.COMMENT:
-                        continue
+            if param not in self.supported_params:
+                # Unvalidated parameter - adopt it with minimal config
+                if param not in self.extra_params:
+                    # Collect guidance from comment lines above
+                    guidance = self._collect_guidance(i)
+                    value = self._cleanse(value_part)
 
-                    # Mark the previous line as superseded
-                    prev_line_num = data.line_num
-                    if data.value != self.COMMENT:
-                        # Comment out the previous uncommented line
-                        self.lines[prev_line_num] = '#' + self.lines[prev_line_num]
-                    self.param_of[prev_line_num] = None
+                    # Create config based on default_cfg template
+                    param_cfg = CannedConfig.default_cfg.copy()
+                    param_cfg['default'] = value
+                    param_cfg['guidance'] = guidance
+                 #  param_cfg['edit_re'] = '.*'  # Permissive regex for unvalidated params
+                 #  param_cfg['enums'] = None
 
-                # Record this line as the current value for this parameter
-                data.line_num = i
-                self.param_of[i] = param
-                data.value = self.COMMENT if is_comment else self._cleanse(mat.group(3))
+                    # Add to extra_params and supported_params
+                    self.extra_params[param] = param_cfg
+                    self.supported_params[param] = param_cfg
+
+                    # Initialize param_data entry
+                    self.param_data[param] = SimpleNamespace(
+                        line_num=None, value=self.ABSENT, new_value=None,
+                        out_value=None)
+
+            data = self.param_data[param]
+
+            # Handle duplicate parameters - last uncommented line wins
+            if data.line_num is not None:  # We've seen this param before
+                # If current line is commented but previous wasn't, skip current
+                if is_comment and data.value != self.COMMENT:
+                    continue
+
+                # Mark the previous line as superseded
+                prev_line_num = data.line_num
+                if data.value != self.COMMENT:
+                    # Comment out the previous uncommented line
+                    self.lines[prev_line_num] = '#' + self.lines[prev_line_num]
+                self.param_of[prev_line_num] = None
+
+            # Record this line as the current value for this parameter
+            data.line_num = i
+            self.param_of[i] = param
+            value = self._cleanse(value_part)
+            data.value = self.COMMENT if is_comment else value
+            data.out_value = value if is_comment else None
 
 
     # --- TUI Interaction Methods ---
@@ -247,7 +307,7 @@ def main():
     }
 
     # Read the default grub configuration
-    grub_file = GrubFile('/etc/default/grub', supported_params)
+    grub_file = GrubFile(supported_params)
 
     print("=== Original State ===")
     for param in supported_params:

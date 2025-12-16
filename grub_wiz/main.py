@@ -1,6 +1,59 @@
 #!/usr/bin/env python3
 """
     grub-wiz: the help grub file editor assistant
+
+⏳ X-param redo feature (dynamic inactive params based on grub file state)
+  Update UI logic to show/hide based on uncommented vs commented/absent
+  Implement X-key toggle with push/pop memory
+  Update write logic to only write active params
+  Add "Unvalidated Parameters" section to display    
+  
+--------- PREVIOUS FULLER TODO List
+
+==== Feature 1: X-Param Redo (Dynamic Inactive Params)
+Core Concept:
+    Show params = uncommented params in /etc/default/grub (what's actually active)
+    ✘-params = commented out OR supported-but-absent params
+Three States:
+    Active: TIMEOUT = 0 (uncommented in grub file)
+    ✘∎: ✘ TIMEOUT ∎ = 0 (commented: #GRUB_TIMEOUT=0)
+    ✘≡: ✘ DEFAULT ≡ (absent from grub file entirely)
+X Key Behavior:
+    Toggles param between active ↔ original-state
+    Push/pop memory during session (can toggle back and forth)
+    Original state: ✘∎ if was commented, ✘≡ if was absent
+    Edits preserved in memory while toggling, but lost on write if param ends up inactive
+Write Behavior:
+    Only write active (uncommented) params
+    Never write commented params
+    Never add absent params as comments
+    Discard any edits to params that are inactive at write time
+UI:
+    s:show/hide toggle for displaying ✘-params
+    Remove del command (X handles everything)
+    X-param state derived fresh from grub file each load (not persisted separately)
+
+==== Feature 2: Unvalidated Parameters (Adopt Unknown Params)
+Core Concept:
+    Parse /etc/default/grub for ANY param matching ^#?GRUB_[A-Z_0-9]+\s*=.*
+    Adopt params not in canned_config.yaml with minimal validation
+# Config for Unvalidated Params:
+#   regex: ".*" (permissive, no validation)
+#   enum: null (no dropdown)
+#   guidance: extracted from comment block above param in grub file
+# Guidance Extraction:
+#   Collect consecutive # ... lines immediately above param
+#   Strip # and leading space from each line
+#   Preserve hard newlines between lines (don't concatenate)
+#   Stop at blank line or non-comment line
+Display:
+    New section: "Unvalidated Parameters" at bottom (after Security & Advanced)
+    Fully editable like any other param
+    No validation/enum guardrails
+# Benefit:
+#   See and edit entire grub file, not just known params
+#   Handle custom/distro-specific/experimental options
+#   No data loss
 """
 # pylint: disable=invalid-name,broad-exception-caught
 # pylint: disable=too-many-locals,too-few-public-methods,too-many-branches

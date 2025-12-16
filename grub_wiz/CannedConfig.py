@@ -10,6 +10,13 @@ yaml.default_flow_style = False
 
 class CannedConfig:
     """ TBD"""
+    default_cfg = {  # config schema for a single parameter
+        'default': '',  # usually string, can be integer
+        'edit_re': '>>EXPERT_EDIT<<', # not a regex (SPECIAL MEANING)
+        'enums': {},  # key: enum name, value enum description
+        'guidance': '',  # often lengthy, may have embedded newlines
+        'hide': False,  # deprecated
+    }
     def __init__(self):
         # 1. Get a Traversable object for the 'grub_wiz' package directory
         resource_path = files('grub_wiz') / 'canned_config.yaml'
