@@ -496,12 +496,23 @@ class ReviewScreen(HomeScreen):
 
 class RestoreScreen(Screen):
     """RESTORE screen - backup management"""
-#   def draw_header(self):
-#       self.gw.add_restore_head()
+    def draw_screen(self):
+        self.win.set_pick_mode(True)
+        self.add_body()
+        self.add_head()
 
-#   def draw_body(self):
-#       self.gw.add_restore_body()
+    def add_head(self):
+        """ TBD """
+        gw = self.gw
+        header = 'RESTORE [d]elete [t]ag [r]estore [v]iew ESC:back ?:help [q]uit'
+        gw.add_fancy_header(header)
 
+    def add_body(self):
+        """ TBD """
+        gw = self.gw
+        for pair in gw.ordered_backup_pairs:
+            prefix = '●' if pair[0] == gw.grub_checksum else ' '
+            self.win.add_body(f'{prefix} {pair[1].name}')
 
 class ViewScreen(Screen):
     """VIEW screen - view backup contents"""
@@ -682,17 +693,6 @@ class GrubWiz:
         regex = cfg.get('edit_re', None)
         value = self.param_values.get(param_name, None)
         return param_name, cfg, enums, regex, value
-
-    def add_restore_head(self):
-        """ TBD """
-        header = 'RESTORE [d]elete [t]ag [r]estore [v]iew ESC:back ?:help [q]uit'
-        self.add_fancy_header(header)
-
-    def add_restore_body(self):
-        """ TBD """
-        for pair in self.ordered_backup_pairs:
-            prefix = '●' if pair[0] == self.grub_checksum else ' '
-            self.win.add_body(f'{prefix} {pair[1].name}')
 
     def add_view_head(self):
         """ TBD """
@@ -1184,12 +1184,7 @@ class GrubWiz:
                 self.add_view_body()
                 self.add_view_head()
 
-            elif self.ss.is_curr(RESTORE_ST):
-                win.set_pick_mode(True)
-                self.add_restore_body()
-                self.add_restore_head()
-
-            elif self.ss.is_curr((REVIEW_ST, HOME_ST)):
+            elif self.ss.is_curr((REVIEW_ST, HOME_ST, RESTORE_ST)):
                 screen_num = self.ss.curr.num
                 self.screens[screen_num].draw_screen()
 
