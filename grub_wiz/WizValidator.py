@@ -407,14 +407,14 @@ class WizValidator:
             enums = cfg.get('enums', None)
             regex = cfg.get('edit_re', None)
             has_enums = isinstance(enums, dict) and len(enums) > 0
-            has_no_regex = not regex or (isinstance(regex, (list, dict)) and len(regex) == 0)
+            has_no_regex = not regex
 
             p1, v1 = getvals(param_name)
             if p1 and exist(v1) and has_enums and has_no_regex:
                 value = str(unquote(v1))
                 found = any(value == unquote(str(k)) for k in enums.keys())
                 bad = not found
-                hey_if(bad, p1, 3, 'value not in list of allowed values')
+            hey_if(bad, p1, 3, 'value not in list of allowed values')
 
         # GRUB_TIMEOUT over recommended limit
         p1, v1 = getvals('GRUB_TIMEOUT')

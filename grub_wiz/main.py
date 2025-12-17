@@ -49,8 +49,8 @@ from .GrubWriter import GrubWriter
 from .WizValidator import WizValidator
 from .ParamDiscovery import ParamDiscovery
 
-HOME_ST, REVIEW_ST, RESTORE_ST, VIEW_ST, HELP_ST = 0, 1, 2, 3, 4  # screen numbers
-SCREENS = ('HOME', 'REVIEW', 'RESTORE', 'VIEW', 'HELP') # screen names
+HOME_ST, REVIEW_ST, RESTORE_ST, VIEW_ST, WARN_ST, HELP_ST  = 0, 1, 2, 3, 4, 5
+SCREENS = ('HOME', 'REVIEW', 'RESTORE', 'VIEW', 'WARN', 'HELP') # screen names
 
 class Tab:
     """ TBD """
@@ -343,20 +343,67 @@ class HomeScreen(Screen):
         self.add_common_head2(header)
         gw.ensure_visible_group()
 
-#   def draw_header(self):
-#       self.gw.add_home_head()
-
-#   def draw_body(self):
-#       return self.gw.add_home_body()
-
     def hide_ACTION(self):
         """Handle 'x' key on HOME screen - toggle param activation"""
-        name, _, _, _, _ = self.gw._get_enums_regex()
+        gw = self.gw
+        name, _, _, _, _ = gw._get_enums_regex()
         if name:
-            if self.gw.is_active_param(name):
-                self.gw.deactivate_param(name)
+            if gw.is_active_param(name):
+                gw.deactivate_param(name)
             else:
-                self.gw.activate_param(name)
+                gw.activate_param(name)
+
+    def cycle_next_ACTION(self):
+        """Handle cycle next key on HOME/REVIEW screen - advance to next enum value"""
+        gw = self.gw
+        name, _, enums, _, _ = gw._get_enums_regex()
+        if enums:
+            value = gw.param_values[name]
+            found = gw.find_in(value, enums)
+            gw.param_values[name] = found.next_value
+
+    def cycle_prev_ACTION(self):
+        """Handle cycle prev key on HOME/REVIEW screen - go to previous enum value"""
+        gw = self.gw
+        name, _, enums, _, _ = gw._get_enums_regex()
+        if enums:
+            value = gw.param_values[name]
+            found = gw.find_in(value, enums)
+            gw.param_values[name] = found.prev_value
+
+    def edit_ACTION(self):
+        """Handle 'e' key on HOME/REVIEW screen - edit parameter value"""
+        gw = self.gw
+        name, _, _, regex, _ = gw._get_enums_regex()
+        if regex:
+            gw.edit_param(self.win, name, regex)
+
+    def expert_edit_ACTION(self):
+        """Handle 'E' key on HOME/REVIEW screen - expert edit parameter"""
+        gw = self.gw
+        name, _, _, _, _ = gw._get_enums_regex()
+        if name:
+            gw.expert_edit_param(self.win, name)
+
+    def show_hidden_ACTION(self):
+        """Handle 's' key on HOME screen - toggle showing hidden params"""
+        self.gw.show_hidden_params = not self.gw.show_hidden_params
+
+    def write_ACTION(self):
+        """Handle 'w' key on HOME screen - push to REVIEW screen"""
+        gw = self.gw
+        gw.prev_pos = gw.ss.push(REVIEW_ST, gw.prev_pos)
+        gw.must_reviews = None  # reset
+        gw.clues = []
+
+    def delete_ACTION(self):
+        """Handle 'd' key on HOME/REVIEW screen - set param to '##'"""
+        gw = self.gw
+        name, _, _, _, _ = gw._get_enums_regex()
+        if name:
+            value = gw.param_values[name]
+            if value != '<>':
+                gw.param_values[name] = '##'
 
 
 class ReviewScreen(HomeScreen):
@@ -366,6 +413,23 @@ class ReviewScreen(HomeScreen):
         self.win.set_pick_mode(True)
         self.add_body()
         self.add_head()
+
+    def add_head(self):
+        """ Construct the review screen header
+            Presumes the body was created and self.clues[]
+            is populated.
+        """
+        gw = self.gw
+        self.add_common_head1('REVIEW')
+
+        # if any warn is hidden on this screen, then show
+        header, cnt = '', gw.hidden_stats.warn
+        if cnt:
+            header = 's:hide' if gw.show_hidden_warns else '[s]how'
+            header += f' {cnt} ✘-warns'
+        header = f'{header:<24}'
+        self.add_common_head2(header)
+        gw.ensure_visible_group()
 
     def add_body(self):
         """ TBD """
@@ -457,30 +521,6 @@ class ReviewScreen(HomeScreen):
                 for emit in emits:
                     self.win.add_body(emit)
 
-
-    def add_head(self):
-        """ Construct the review screen header
-            Presumes the body was created and self.clues[]
-            is populated.
-        """
-        gw = self.gw
-        self.add_common_head1('REVIEW')
-
-        # if any warn is hidden on this screen, then show
-        header, cnt = '', gw.hidden_stats.warn
-        if cnt:
-            header = 's:hide' if gw.show_hidden_warns else '[s]how'
-            header += f' {cnt} ✘-warns'
-        header = f'{header:<24}'
-        self.add_common_head2(header)
-        gw.ensure_visible_group()
-
-#   def draw_header(self):
-#       self.gw.add_review_head()
-
-#   def draw_body(self):
-#       self.gw.add_review_body()
-
     def hide_ACTION(self):
         """Handle 'x' key on REVIEW screen - toggle warning suppression"""
         gw = self.gw
@@ -492,6 +532,22 @@ class ReviewScreen(HomeScreen):
                     gw.warn_db.unhide_warn(clue.ident)
                 else:
                     gw.warn_db.hide_warn(clue.ident)
+
+    def undo_ACTION(self):
+        """Handle 'u' key on REVIEW screen - undo parameter change"""
+        gw = self.gw
+        name, _, _, _, _ = gw._get_enums_regex()
+        if name:
+            prev_value = gw.prev_values[name]
+            gw.param_values[name] = prev_value
+
+    def show_hidden_ACTION(self):
+        """Handle 's' key on REVIEW screen - toggle showing hidden warnings"""
+        self.gw.show_hidden_warns = not self.gw.show_hidden_warns
+
+    def write_ACTION(self):
+        """Handle 'w' key on REVIEW screen - update grub"""
+        self.gw.update_grub()
 
 
 class RestoreScreen(Screen):
@@ -513,6 +569,65 @@ class RestoreScreen(Screen):
         for pair in gw.ordered_backup_pairs:
             prefix = '●' if pair[0] == gw.grub_checksum else ' '
             self.win.add_body(f'{prefix} {pair[1].name}')
+
+    def restore_ACTION(self):
+        """Handle 'r' key on RESTORE screen - restore selected backup"""
+        gw = self.gw
+        idx = self.win.pick_pos
+        if 0 <= idx < len(gw.ordered_backup_pairs):
+            key = gw.ordered_backup_pairs[idx][0]
+            gw.backup_mgr.restore_backup(gw.backups[key])
+            gw.prev_pos = gw.ss.pop()
+            assert gw.ss.is_curr(HOME_ST)
+            gw._reinit()
+            gw.ss = ScreenStack(gw.win, gw.spins, SCREENS)
+            gw.do_start_up_backup()
+
+    def delete_ACTION(self):
+        """Handle 'd' key on RESTORE screen - delete selected backup"""
+        gw = self.gw
+        idx = self.win.pick_pos
+        if 0 <= idx < len(gw.ordered_backup_pairs):
+            doomed = gw.ordered_backup_pairs[idx][1]
+            if gw.really_wanna(f'remove {doomed!r}'):
+                try:
+                    os.unlink(doomed)
+                except Exception as exce:
+                    self.win.alert(
+                        message=f'ERR: unlink({doomed}) [{exce}]')
+                gw.refresh_backup_list()
+
+    def tag_ACTION(self):
+        """Handle 't' key on RESTORE screen - tag/retag selected backup"""
+        gw = self.gw
+        idx = self.win.pick_pos
+        if 0 <= idx < len(gw.ordered_backup_pairs):
+            chosen = gw.ordered_backup_pairs[idx][1]
+            tag = gw.request_backup_tag(f'Enter tag for {chosen.name}',
+                                              seed='')
+            if tag:
+                new_name = re.sub(r'[^.]+\.bak$', f'{tag}.bak', chosen.name)
+                new_path = chosen.parent / new_name
+                if new_path != chosen:
+                    try:
+                        os.rename(chosen, new_path)
+                    except Exception as exce:
+                        self.win.alert(
+                            message=f'ERR: rename({chosen.name}, {new_path.name}) [{exce}]')
+                gw.refresh_backup_list()
+
+    def view_ACTION(self):
+        """Handle 'v' key on RESTORE screen - view selected backup"""
+        gw = self.gw
+        idx = self.win.pick_pos
+        if 0 <= idx < len(gw.ordered_backup_pairs):
+            try:
+                gw.bak_path = gw.ordered_backup_pairs[idx][1]
+                gw.bak_lines = gw.bak_path.read_text().splitlines()
+                assert isinstance(gw.bak_lines, list)
+                gw.prev_pos = gw.ss.push(VIEW_ST, gw.prev_pos)
+            except Exception as ex:
+                self.win.alert(f'ERR: cannot slurp {gw.bak_path} [{ex}]')
 
 class ViewScreen(Screen):
     """VIEW screen - view backup contents"""
@@ -539,6 +654,98 @@ class ViewScreen(Screen):
             while line:
                 self.win.add_body(f'{' ':>6}{line[:wid]}')
                 line = line[wid:]
+
+class WarnScreen(Screen):
+    """ WARNINGS Screen"""
+    def __init__(self, grub_wiz):
+        super().__init__(grub_wiz)
+        self.clues = []
+        self.search = ''
+        self.regex = None # compiled
+
+    def draw_screen(self):
+        """ TBD """
+        self.win.set_pick_mode(True)
+        self.draw_body()
+        self.draw_head()
+        
+    def draw_head(self):
+        """ TBD """
+        gw = self.gw
+        db = gw.warn_db
+        pos = self.win.pick_pos
+        inh = False
+        if 0 <= pos < len(self.clues):
+            key = self.clues[pos]
+            inh = db.is_hidden_warn(key)
+        head = f"[x]{'allow' if inh else 'inh'}"
+        head += f'   /{self.search}'
+        head += '   ESC=back'
+        self.win.add_header(head)
+
+    def draw_body(self):
+        """ TBD """
+        gw = self.gw
+        db = gw.warn_db
+        all_info = db.all_info
+        keys = sorted(all_info.keys())
+        prev_param = None
+
+        for key in keys:
+            sev = all_info[key]
+            inh = 'X' if db.is_hidden_warn(key) else ' '
+
+            # Split key into param_name and message
+            if ': ' in key:
+                param_name, message = key.split(': ', 1)
+                # Strip GRUB_ prefix
+                display_param = param_name.replace('GRUB_', '', 1)
+
+                # Create full line for searching (always has param name)
+                full_line = f'[{inh}] {"*"*sev:>4} {display_param}: {message}'
+
+                # Check if same param as previous DISPLAYED line
+                if param_name == prev_param:
+                    # Omit param name, just show message with proper spacing
+                    line = f'[{inh}] {"*"*sev:>4} {" " * (len(display_param) + 2)}{message}'
+                else:
+                    # Show full line with param name
+                    line = full_line
+            else:
+                # No colon in key, show as-is
+                full_line = line = f'[{inh}] {"*"*sev:>4} {key}'
+                param_name = None
+
+            # Search against full_line, but display line
+            if not self.regex or self.regex.search(full_line):
+                self.win.add_body(line)
+                self.clues.append(key)
+                # Only update prev_param for lines that are actually displayed
+                prev_param = param_name
+            
+    def slash_ACTION(self):
+        """ TBD """
+        hint = 'must be a valid python regex'
+        regex = None # compiled
+        pattern = self.search
+
+        while True:
+            prompt = f'Enter search pattern [{hint}]'
+            pattern = self.win.answer(prompt=prompt, seed=str(pattern), height=2)
+            if pattern is None: # aborted
+                return
+            
+            if not pattern:
+                self.search = ''
+                self.regex = None
+                return
+            try:
+                regex = re.compile(pattern, re.IGNORECASE)
+                self.regex, self.search = regex, pattern
+                return
+            except Exception as whynot:
+                hint = str(whynot)
+                continue
 
 class HelpScreen(Screen):
     """HELP screen"""
@@ -661,6 +868,7 @@ class GrubWiz:
         spinner.add_key('hide', 'x - mark/unmark X-params/warnings', category='action')
         spinner.add_key('show_hidden', 's - show/hide the X-params/warnings', category='action')
         spinner.add_key('enter_restore', 'R - enter restore screen', category='action')
+        spinner.add_key('enter_warnings', 'W - enter WARNINGs screen', category='action')
         spinner.add_key('restore', 'r - restore selected backup [in restore screen]', category='action')
         spinner.add_key('delete', 'd - delete selected backup [in restore screen]', category='action')
         spinner.add_key('tag', 't - tag/retag a backup file [in restore screen]', category='action')
@@ -669,6 +877,7 @@ class GrubWiz:
                         category='action', keys=[ord('w'), 10, 13])
         spinner.add_key('escape', 'ESC - back to prev screen',
                         category="action", keys=[27,])
+        spinner.add_key('slash', '/ - filter pattern', category='action')
         spinner.add_key('quit', 'q,ctl-c - quit the app', category='action', keys={0x3, ord('q')})
         spinner.add_key('fancy_headers', '_ - cycle fancy headers (Off/Underline/Reverse)',
                         vals=['Underline', 'Reverse', 'Off'], keys=[ord('_')])
@@ -691,7 +900,8 @@ class GrubWiz:
             REVIEW_ST: ReviewScreen(self),
             RESTORE_ST: RestoreScreen(self),
             VIEW_ST: ViewScreen(self),
-            HELP_ST: HelpScreen(self)
+            WARN_ST: WarnScreen(self),
+            HELP_ST: HelpScreen(self),
         }
 
     def _get_enums_regex(self):
@@ -1177,10 +1387,8 @@ class GrubWiz:
 
         while True:
 
-            if self.ss.is_curr((REVIEW_ST, HOME_ST, RESTORE_ST,
-                                  VIEW_ST, HELP_ST)):
-                screen_num = self.ss.curr.num
-                self.screens[screen_num].draw_screen()
+            screen_num = self.ss.curr.num
+            self.screens[screen_num].draw_screen()
 
             win.render()
             key = win.prompt(seconds=self.next_prompt_seconds[0])
@@ -1203,10 +1411,8 @@ class GrubWiz:
                     else:
                         break
 
-                name, _, enums, regex = '', None, {}, ''
-                if self.ss.is_curr((HOME_ST, REVIEW_ST)):
-                    name, _, enums, regex, _ = self._get_enums_regex()
-                if self.ss.act_in('escape', (REVIEW_ST, RESTORE_ST, VIEW_ST, HELP_ST)):
+                if self.ss.act_in('escape', (REVIEW_ST, RESTORE_ST,
+                                 VIEW_ST, WARN_ST, HELP_ST)):
                     if self.ss.stack:
                         self.prev_pos = self.ss.pop()
                         self.must_reviews = None  # Reset cached review data
@@ -1214,111 +1420,33 @@ class GrubWiz:
                 if self.ss.act_in('help_mode', (HOME_ST, REVIEW_ST, RESTORE_ST)):
                     self.prev_pos = self.ss.push(HELP_ST, self.prev_pos)
 
-                if self.ss.act_in('cycle_next', (HOME_ST, REVIEW_ST)):
-                    if enums:
-                        value = self.param_values[name]
-                        found = self.find_in(value, enums)
-                        self.param_values[name] = found.next_value
-
-                if self.ss.act_in('cycle_prev', (HOME_ST, REVIEW_ST)):
-                    if enums:
-                        value = self.param_values[name]
-                        found = self.find_in(value, enums)
-                        self.param_values[name] = found.prev_value
-
-                if self.ss.act_in('undo', REVIEW_ST):
-                    if name:
-                        prev_value = self.prev_values[name]
-                        self.param_values[name] = prev_value
-
-                if self.ss.act_in('show_hidden', (REVIEW_ST, HOME_ST)):
-                    if self.ss.is_curr(REVIEW_ST):
-                        self.show_hidden_warns = not self.show_hidden_warns
-                    if self.ss.is_curr(HOME_ST):
-                        self.show_hidden_params = not self.show_hidden_params
-
-                if self.ss.act_in('edit', (HOME_ST, REVIEW_ST)):
-                    if regex:
-                        self.edit_param(win, name, regex)
-
-                if self.ss.act_in('expert_edit', (HOME_ST, REVIEW_ST)):
-                    if name:
-                        self.expert_edit_param(win, name)
-
-                if self.ss.act_in('hide', (HOME_ST, REVIEW_ST)):
-                    current_screen = self.ss.curr.num
-                    self.screens[current_screen].handle_action('hide')
-
-                if self.ss.act_in('write', (HOME_ST, REVIEW_ST)):
-                    if self.ss.is_curr(HOME_ST):
-                        self.prev_pos = self.ss.push(REVIEW_ST, self.prev_pos)
-                        self.must_reviews = None # reset
-                        self.clues = []
-                    else: # REVIEW_ST
-                        self.update_grub()
+                # Actions delegated to screen classes
+                screen_actions = {
+                    'cycle_next': (HOME_ST, REVIEW_ST),
+                    'cycle_prev': (HOME_ST, REVIEW_ST),
+                    'undo': REVIEW_ST,
+                    'show_hidden': (REVIEW_ST, HOME_ST),
+                    'edit': (HOME_ST, REVIEW_ST),
+                    'expert_edit': (HOME_ST, REVIEW_ST),
+                    'hide': (HOME_ST, REVIEW_ST),
+                    'write': (HOME_ST, REVIEW_ST),
+                    'restore': RESTORE_ST,
+                    'delete': (HOME_ST, REVIEW_ST, RESTORE_ST),
+                    'tag': RESTORE_ST,
+                    'view': RESTORE_ST,
+                    'slash': WARN_ST,
+                }
+                for action, screens in screen_actions.items():
+                    if self.ss.act_in(action, screens):
+                        self.screens[self.ss.curr.num].handle_action(action)
 
                 if self.ss.act_in('enter_restore', (HOME_ST, REVIEW_ST)):
                     self.prev_pos = self.ss.push(RESTORE_ST, self.prev_pos)
                     self.do_start_up_backup()
 
-                if spins.restore:
-                    spins.restore = True
-                if self.ss.act_in('restore', RESTORE_ST):
-                    idx = self.win.pick_pos
-                    if 0 <= idx < len(self.ordered_backup_pairs):
-                        key = self.ordered_backup_pairs[idx][0]
-                        self.backup_mgr.restore_backup(self.backups[key])
-                        self.prev_pos = self.ss.pop()
-                        assert self.ss.is_curr(HOME_ST)
-                        self._reinit()
-                        self.ss = ScreenStack(self.win, self.spins, SCREENS)
-                        self.do_start_up_backup()
-
-                if self.ss.act_in('delete', (HOME_ST, REVIEW_ST, RESTORE_ST)):
-                    if self.ss.is_curr(RESTORE_ST):
-                        idx = self.win.pick_pos
-                        if 0 <= idx < len(self.ordered_backup_pairs):
-                            doomed = self.ordered_backup_pairs[idx][1]
-                            if self.really_wanna(f'remove {doomed!r}'):
-                                try:
-                                    os.unlink(doomed)
-                                except Exception as exce:
-                                    self.win.alert(
-                                        message=f'ERR: unlink({doomed}) [{exce}]')
-                                self.refresh_backup_list()
-                    else:
-                        if name:
-                            value = self.param_values[name]
-                            if value != '<>':
-                                self.param_values[name] = '##'
-
-                if self.ss.act_in('tag', RESTORE_ST):
-                    idx = self.win.pick_pos
-                    if 0 <= idx < len(self.ordered_backup_pairs):
-                        chosen = self.ordered_backup_pairs[idx][1]
-                        tag = self.request_backup_tag(f'Enter tag for {chosen.name}',
-                                                      seed='')
-                        if tag:
-                            new_name = re.sub(r'[^.]+\.bak$', f'{tag}.bak', chosen.name)
-                            new_path = chosen.parent / new_name
-                            if new_path != chosen:
-                                try:
-                                    os.rename(chosen, new_path)
-                                except Exception as exce:
-                                    self.win.alert(
-                                        message=f'ERR: rename({chosen.name}, {new_path.name}) [{exce}]')
-                            self.refresh_backup_list()
-
-                if self.ss.act_in('view', RESTORE_ST):
-                    idx = self.win.pick_pos
-                    if 0 <= idx < len(self.ordered_backup_pairs):
-                        try:
-                            self.bak_path = self.ordered_backup_pairs[idx][1]
-                            self.bak_lines = self.bak_path.read_text().splitlines()
-                            assert isinstance(self.bak_lines, list)
-                            self.prev_pos = self.ss.push(VIEW_ST, self.prev_pos)
-                        except Exception as ex:
-                            self.win.alert(f'ERR: cannot slurp {self.bak_path} [{ex}]')
+                if self.ss.act_in('enter_warnings', (REVIEW_ST)):
+                    self.prev_pos = self.ss.push(WARN_ST, self.prev_pos)
+                    self.do_start_up_backup()
 
             win.clear()
 
