@@ -516,20 +516,38 @@ class RestoreScreen(Screen):
 
 class ViewScreen(Screen):
     """VIEW screen - view backup contents"""
-#   def draw_header(self):
-#       self.gw.add_view_head()
+    def draw_screen(self):
+        """ TBD """
+        self.win.set_pick_mode(False)
+        self.add_body()
+        self.add_head()
 
-#   def draw_body(self):
-#       self.gw.add_view_body()
+    def add_head(self):
+        """ TBD """
+        gw = self.gw
+        header = f'VIEW  {gw.bak_path.name!r}  ESC:back ?:help [q]uit'
+        gw.add_fancy_header(header)
 
+    def add_body(self):
+        """ TBD """
+        gw = self.gw
+        wid = self.win.cols - 7 # 4 num + SP before + 2SP after
+        for idx, line in enumerate(gw.bak_lines):
+            self.win.add_body(f'{idx:>4}', attr=cs.A_BOLD)
+            self.win.add_body(f'  {line[:wid]}', resume=True)
+            line = line[wid:]
+            while line:
+                self.win.add_body(f'{' ':>6}{line[:wid]}')
+                line = line[wid:]
 
 class HelpScreen(Screen):
     """HELP screen"""
-#   def draw_header(self):
-#       self.gw.add_help_head()
-
-#   def draw_body(self):
-#       self.gw.add_help_body()
+    def draw_screen(self):
+        """ TBD """
+        gw, win = self.gw, self.win
+        self.win.set_pick_mode(False)
+        gw.spinner.show_help_nav_keys(win)
+        gw.spinner.show_help_body(win)
 
 
 class GrubWiz:
@@ -693,22 +711,6 @@ class GrubWiz:
         regex = cfg.get('edit_re', None)
         value = self.param_values.get(param_name, None)
         return param_name, cfg, enums, regex, value
-
-    def add_view_head(self):
-        """ TBD """
-        header = f'VIEW  {self.bak_path.name!r}  ESC:back ?:help [q]uit'
-        self.add_fancy_header(header)
-
-    def add_view_body(self):
-        """ TBD """
-        wid = self.win.cols - 7 # 4 num + SP before + 2SP after
-        for idx, line in enumerate(self.bak_lines):
-            self.win.add_body(f'{idx:>4}', attr=cs.A_BOLD)
-            self.win.add_body(f'  {line[:wid]}', resume=True)
-            line = line[wid:]
-            while line:
-                self.win.add_body(f'{' ':>6}{line[:wid]}')
-                line = line[wid:]
 
 
     def truncate_line(self, line):
@@ -1174,17 +1176,9 @@ class GrubWiz:
         self.next_prompt_seconds = [0.1, 0.1]
 
         while True:
-            if self.ss.is_curr(HELP_ST):
-                win.set_pick_mode(False)
-                self.spinner.show_help_nav_keys(win)
-                self.spinner.show_help_body(win)
 
-            elif self.ss.is_curr(VIEW_ST):
-                win.set_pick_mode(False)
-                self.add_view_body()
-                self.add_view_head()
-
-            elif self.ss.is_curr((REVIEW_ST, HOME_ST, RESTORE_ST)):
+            if self.ss.is_curr((REVIEW_ST, HOME_ST, RESTORE_ST,
+                                  VIEW_ST, HELP_ST)):
                 screen_num = self.ss.curr.num
                 self.screens[screen_num].draw_screen()
 
