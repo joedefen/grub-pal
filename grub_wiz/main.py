@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 r"""
     grub-wiz: the help grub file editor assistant
-    
+
 1. WARNING Screen
     Exhaustive view of ALL validation checks (not just triggered ones)
     Launched from REVIEW screen
@@ -76,16 +76,58 @@ class Tab:
 
 class ScreenStack:
     """ TBD """
-    def __init__(self, win: ConsoleWindow , spins_obj: object, screens: tuple):
+    def __init__(self, win: ConsoleWindow , spins_obj: object, screens: tuple, screen_objects: dict = None):
         self.win = win
         self.obj = spins_obj
         self.screens = screens
+        self.screen_objects = screen_objects or {}  # Dict of screen_num -> Screen instance
         self.stack = []
         self.curr = None
         self.push(HOME_ST, 0)
 
-    def push(self, screen, prev_pos):
-        """TBD"""
+    def push(self, screen, prev_pos, force=False):
+        """
+        Push a new screen onto the stack with validation and loop prevention.
+
+        Args:
+            screen: Screen number to push
+            prev_pos: Previous cursor position
+            force: Skip validation hooks if True
+
+        Returns:
+            Previous position if successful, None if blocked by validation
+        """
+        # Loop prevention: Check if screen is already on the stack
+        if not force and self.curr and screen == self.curr.num:
+            # Trying to push the current screen again - ignore
+            return None
+
+        # Check if screen is already in the stack (deeper loop)
+        if not force:
+            for stacked_screen in self.stack:
+                if stacked_screen.num == screen:
+                    # Would create a loop - block it
+                    return None
+
+        from_screen_num = self.curr.num if self.curr else None
+
+        # Call leave_screen hook on current screen
+        if not force and self.curr and self.screen_objects:
+            current_screen_obj = self.screen_objects.get(from_screen_num)
+            if current_screen_obj:
+                if not current_screen_obj.leave_screen(screen):
+                    # Current screen blocked the navigation
+                    return None
+
+        # Call enter_screen hook on new screen
+        if not force and self.screen_objects:
+            new_screen_obj = self.screen_objects.get(screen)
+            if new_screen_obj:
+                if not new_screen_obj.enter_screen(from_screen_num):
+                    # New screen blocked the entry
+                    return None
+
+        # Navigation approved - proceed
         if self.curr:
             self.curr.pick_pos = self.win.pick_pos
             self.curr.scroll_pos = self.win.scroll_pos
@@ -97,14 +139,43 @@ class ScreenStack:
         self.win.pick_pos = self.win.scroll_pos = 0
         return 0
 
-    def pop(self):
-        """ TBD """
-        if self.stack:
-            self.curr = self.stack.pop()
-            self.win.pick_pos = self.curr.pick_pos
-            self.win.scroll_pos = self.curr.scroll_pos
-            return self.curr.prev_pos
-        return None
+    def pop(self, force=False):
+        """
+        Pop the top screen from the stack with validation.
+
+        Args:
+            force: Skip validation hooks if True
+
+        Returns:
+            Previous position if successful, None if stack is empty or blocked
+        """
+        if not self.stack:
+            return None
+
+        to_screen_num = self.stack[-1].num
+        from_screen_num = self.curr.num if self.curr else None
+
+        # Call leave_screen hook on current screen
+        if not force and self.curr and self.screen_objects:
+            current_screen_obj = self.screen_objects.get(from_screen_num)
+            if current_screen_obj:
+                if not current_screen_obj.leave_screen(to_screen_num):
+                    # Current screen blocked the navigation
+                    return None
+
+        # Call enter_screen hook on the screen we're returning to
+        if not force and self.screen_objects:
+            prev_screen_obj = self.screen_objects.get(to_screen_num)
+            if prev_screen_obj:
+                if not prev_screen_obj.enter_screen(from_screen_num):
+                    # Previous screen blocked the re-entry
+                    return None
+
+        # Navigation approved - proceed
+        self.curr = self.stack.pop()
+        self.win.pick_pos = self.curr.pick_pos
+        self.win.scroll_pos = self.curr.scroll_pos
+        return self.curr.prev_pos
 
     def is_curr(self, screens):
         """TBD"""
@@ -171,6 +242,30 @@ class Screen:
     def draw_screen(self):
         """Draw screen-specific lines (header and body)"""
 
+    def enter_screen(self, from_screen):
+        """
+        Hook called when entering this screen from another screen.
+
+        Args:
+            from_screen: Screen number we're coming from (or None if initial screen)
+
+        Returns:
+            True to allow entry, False to block entry
+        """
+        return True
+
+    def leave_screen(self, to_screen):
+        """
+        Hook called when leaving this screen to go to another screen.
+
+        Args:
+            to_screen: Screen number we're going to (or None if exiting app)
+
+        Returns:
+            True to allow leaving, False to block leaving
+        """
+        return True
+
     def handle_action(self, action_name):
         """
         Dispatch action to screen-specific handler method.
@@ -187,6 +282,15 @@ class Screen:
 
 class HomeScreen(Screen):
     """HOME screen - parameter editing"""
+    def leave_screen(self, to_screen):
+        """
+        Hook called when leaving home screen.
+        Can add validation here if needed (e.g., warn about unsaved changes).
+        """
+        # For now, always allow leaving
+        # Future: could check for unsaved changes and prompt user
+        return True
+
     def draw_screen(self):
         """ TBD """
         self.win.set_pick_mode(True)
@@ -298,7 +402,7 @@ class HomeScreen(Screen):
         """ TBD"""
         gw = self.gw
         tab = self.get_tab()
-        review = gw.ss.is_curr(REVIEW_ST)
+        review_screen = gw.ss.is_curr(REVIEW_ST)
         picked = gw.win.pick_pos
         if 0 <= picked < len(gw.clues):
             clue = gw.clues[picked]
@@ -308,18 +412,22 @@ class HomeScreen(Screen):
 
         middle =  ''
         if cat == 'param':
-            param_name, _, enums, regex, value = gw._get_enums_regex()
+            param_name, _, enums, regex, value = gw.get_enums_regex()
             if enums:
                 middle += '⮜–⮞'
             if regex:
                 middle += ' [e]dit'
-            if not review and param_name:
+            if not review_screen and param_name:
                 middle += (' x:comment-out' if gw.is_active_param(
                             param_name) else ' x:uncomment' if value == GrubFile.COMMENT
                             else ' x:create')
-        if cat == 'warn' and review:
-            middle += ' x:unmark' if gw.warn_db.is_hidden_warn(
-                        ident) else ' x:mark'
+            if review_screen and param_name:
+                if str(value) != str(gw.prev_values[param_name]):
+                    middle += ' [u]ndo'
+
+        if cat == 'warn' and review_screen:
+            middle += ' x:allow' if gw.warn_db.is_inhibit(
+                        ident) else ' x:inh'
 
         gw.add_fancy_header(f'{left:<{tab.lwid}}  {middle}')
 
@@ -346,7 +454,7 @@ class HomeScreen(Screen):
     def hide_ACTION(self):
         """Handle 'x' key on HOME screen - toggle param activation"""
         gw = self.gw
-        name, _, _, _, _ = gw._get_enums_regex()
+        name, _, _, _, _ = gw.get_enums_regex()
         if name:
             if gw.is_active_param(name):
                 gw.deactivate_param(name)
@@ -356,7 +464,7 @@ class HomeScreen(Screen):
     def cycle_next_ACTION(self):
         """Handle cycle next key on HOME/REVIEW screen - advance to next enum value"""
         gw = self.gw
-        name, _, enums, _, _ = gw._get_enums_regex()
+        name, _, enums, _, _ = gw.get_enums_regex()
         if enums:
             value = gw.param_values[name]
             found = gw.find_in(value, enums)
@@ -365,7 +473,7 @@ class HomeScreen(Screen):
     def cycle_prev_ACTION(self):
         """Handle cycle prev key on HOME/REVIEW screen - go to previous enum value"""
         gw = self.gw
-        name, _, enums, _, _ = gw._get_enums_regex()
+        name, _, enums, _, _ = gw.get_enums_regex()
         if enums:
             value = gw.param_values[name]
             found = gw.find_in(value, enums)
@@ -374,14 +482,14 @@ class HomeScreen(Screen):
     def edit_ACTION(self):
         """Handle 'e' key on HOME/REVIEW screen - edit parameter value"""
         gw = self.gw
-        name, _, _, regex, _ = gw._get_enums_regex()
+        name, _, _, regex, _ = gw.get_enums_regex()
         if regex:
             gw.edit_param(self.win, name, regex)
 
     def expert_edit_ACTION(self):
         """Handle 'E' key on HOME/REVIEW screen - expert edit parameter"""
         gw = self.gw
-        name, _, _, _, _ = gw._get_enums_regex()
+        name, _, _, _, _ = gw.get_enums_regex()
         if name:
             gw.expert_edit_param(self.win, name)
 
@@ -392,14 +500,14 @@ class HomeScreen(Screen):
     def write_ACTION(self):
         """Handle 'w' key on HOME screen - push to REVIEW screen"""
         gw = self.gw
-        gw.prev_pos = gw.ss.push(REVIEW_ST, gw.prev_pos)
-        gw.must_reviews = None  # reset
-        gw.clues = []
+        if gw.navigate_to(REVIEW_ST):
+            gw.must_reviews = None  # reset
+            gw.clues = []
 
     def delete_ACTION(self):
         """Handle 'd' key on HOME/REVIEW screen - set param to '##'"""
         gw = self.gw
-        name, _, _, _, _ = gw._get_enums_regex()
+        name, _, _, _, _ = gw.get_enums_regex()
         if name:
             value = gw.param_values[name]
             if value != '<>':
@@ -408,6 +516,16 @@ class HomeScreen(Screen):
 
 class ReviewScreen(HomeScreen):
     """REVIEW screen - show diffs and warnings"""
+    def enter_screen(self, from_screen):
+        """
+        Hook called when entering review screen.
+        Resets cached data to ensure fresh review.
+        """
+        # Reset cached review data when entering from any screen
+        self.gw.must_reviews = None
+        self.gw.clues = []
+        return True
+
     def draw_screen(self):
         """ TBD """
         self.win.set_pick_mode(True)
@@ -502,11 +620,11 @@ class ReviewScreen(HomeScreen):
 
             for hey in ns.heys:
                 warn_key = f'{param_name} {hey[1]}'
-                is_hidden = gw.warn_db.is_hidden_warn(warn_key)
-                gw.hidden_stats.warn += int(is_hidden)
+                is_inhibit = gw.warn_db.is_inhibit(warn_key)
+                gw.hidden_stats.warn += int(is_inhibit)
 
-                if not is_hidden or gw.show_hidden_warns:
-                    mark = '✘' if is_hidden else ' '
+                if not is_inhibit or gw.show_hidden_warns:
+                    mark = '✘' if is_inhibit else ' '
                     sub_text = f'{mark} {hey[0]:>4}'
                     line = f'{sub_text:>{tab.lwid}}  {hey[1]}'
                     cnt = gw.add_wrapped_body_line(line,
@@ -528,15 +646,14 @@ class ReviewScreen(HomeScreen):
         if gw.clues and 0 <= pos < len(gw.clues):
             clue = gw.clues[pos]
             if clue.cat == 'warn':
-                if gw.warn_db.is_hidden_warn(clue.ident):
-                    gw.warn_db.unhide_warn(clue.ident)
-                else:
-                    gw.warn_db.hide_warn(clue.ident)
+                opposite = not gw.warn_db.is_inhibit(clue.ident)
+                gw.warn_db.inhibit(clue.ident, opposite)
+                gw.warn_db.write_if_dirty()
 
     def undo_ACTION(self):
         """Handle 'u' key on REVIEW screen - undo parameter change"""
         gw = self.gw
-        name, _, _, _, _ = gw._get_enums_regex()
+        name, _, _, _, _ = gw.get_enums_regex()
         if name:
             prev_value = gw.prev_values[name]
             gw.param_values[name] = prev_value
@@ -552,6 +669,15 @@ class ReviewScreen(HomeScreen):
 
 class RestoreScreen(Screen):
     """RESTORE screen - backup management"""
+    def enter_screen(self, from_screen):
+        """
+        Hook called when entering restore screen.
+        Refreshes backup list to show current state.
+        """
+        self.gw.do_start_up_backup()
+        self.gw.refresh_backup_list()
+        return True
+
     def draw_screen(self):
         self.win.set_pick_mode(True)
         self.add_body()
@@ -577,11 +703,11 @@ class RestoreScreen(Screen):
         if 0 <= idx < len(gw.ordered_backup_pairs):
             key = gw.ordered_backup_pairs[idx][0]
             gw.backup_mgr.restore_backup(gw.backups[key])
-            gw.prev_pos = gw.ss.pop()
-            assert gw.ss.is_curr(HOME_ST)
-            gw._reinit()
-            gw.ss = ScreenStack(gw.win, gw.spins, SCREENS)
-            gw.do_start_up_backup()
+            if gw.navigate_back():
+                assert gw.ss.is_curr(HOME_ST)
+                gw._reinit()
+                gw.ss = ScreenStack(gw.win, gw.spins, SCREENS, gw.screens)
+                gw.do_start_up_backup()
 
     def delete_ACTION(self):
         """Handle 'd' key on RESTORE screen - delete selected backup"""
@@ -625,12 +751,33 @@ class RestoreScreen(Screen):
                 gw.bak_path = gw.ordered_backup_pairs[idx][1]
                 gw.bak_lines = gw.bak_path.read_text().splitlines()
                 assert isinstance(gw.bak_lines, list)
-                gw.prev_pos = gw.ss.push(VIEW_ST, gw.prev_pos)
+                gw.navigate_to(VIEW_ST)
             except Exception as ex:
                 self.win.alert(f'ERR: cannot slurp {gw.bak_path} [{ex}]')
 
 class ViewScreen(Screen):
     """VIEW screen - view backup contents"""
+    def enter_screen(self, from_screen):
+        """
+        Hook called when entering view screen.
+        Validates that backup data is loaded.
+        """
+        # Ensure we have backup data to display
+        if not self.gw.bak_lines:
+            # No backup loaded - this shouldn't happen, but handle gracefully
+            return False
+        return True
+
+    def leave_screen(self, to_screen):
+        """
+        Hook called when leaving view screen.
+        Cleans up backup view data.
+        """
+        # Clean up when leaving view screen
+        self.gw.bak_lines = None
+        self.gw.bak_path = None
+        return True
+
     def draw_screen(self):
         """ TBD """
         self.win.set_pick_mode(False)
@@ -659,29 +806,47 @@ class WarnScreen(Screen):
     """ WARNINGS Screen"""
     def __init__(self, grub_wiz):
         super().__init__(grub_wiz)
-        self.clues = []
+        self.keys = []  # key ('param: text') in each position
         self.search = ''
         self.regex = None # compiled
+
+    def enter_screen(self, from_screen):
+        """
+        Hook called when entering warnings screen.
+        """
+        # self.search = ''
+        # self.regex = None
+        return True
+
+    def leave_screen(self, to_screen):
+        """
+        Hook called when leaving warnings screen.
+        Write any changes before leaving.
+        """
+        # Save any inhibit changes before leaving
+        self.gw.warn_db.write_if_dirty()
+        return True
 
     def draw_screen(self):
         """ TBD """
         self.win.set_pick_mode(True)
         self.draw_body()
         self.draw_head()
-        
+
     def draw_head(self):
         """ TBD """
         gw = self.gw
         db = gw.warn_db
         pos = self.win.pick_pos
         inh = False
-        if 0 <= pos < len(self.clues):
-            key = self.clues[pos]
-            inh = db.is_hidden_warn(key)
-        head = f"[x]{'allow' if inh else 'inh'}"
-        head += f'   /{self.search}'
-        head += '   ESC=back'
-        self.win.add_header(head)
+        if 0 <= pos < len(self.keys):
+            key = self.keys[pos]
+            inh = db.is_inhibit(key)
+        line = 'WARNINGS'
+        line += f"   [x]:{'allow' if inh else 'inh'}"
+        line += f'   /{self.search}'
+        line += '   ESC=back [q]uit'
+        gw.add_fancy_header(line)
 
     def draw_body(self):
         """ TBD """
@@ -693,7 +858,7 @@ class WarnScreen(Screen):
 
         for key in keys:
             sev = all_info[key]
-            inh = 'X' if db.is_hidden_warn(key) else ' '
+            inh = 'X' if db.is_inhibit(key) else ' '
 
             # Split key into param_name and message
             if ': ' in key:
@@ -719,10 +884,20 @@ class WarnScreen(Screen):
             # Search against full_line, but display line
             if not self.regex or self.regex.search(full_line):
                 self.win.add_body(line)
-                self.clues.append(key)
+                self.keys.append(key)
                 # Only update prev_param for lines that are actually displayed
                 prev_param = param_name
-            
+
+    def hide_ACTION(self):
+        """ TBD """
+        gw = self.gw
+        pos = self.win.pick_pos
+        if self.keys and 0 <= pos < len(self.keys):
+            key = self.keys[pos]
+            opposite = not gw.warn_db.is_inhibit(key)
+            gw.warn_db.inhibit(key, opposite)
+            gw.warn_db.write_if_dirty()
+
     def slash_ACTION(self):
         """ TBD """
         hint = 'must be a valid python regex'
@@ -734,7 +909,7 @@ class WarnScreen(Screen):
             pattern = self.win.answer(prompt=prompt, seed=str(pattern), height=2)
             if pattern is None: # aborted
                 return
-            
+
             if not pattern:
                 self.search = ''
                 self.regex = None
@@ -785,7 +960,7 @@ class GrubWiz:
         self.backups = None
         self.ordered_backup_pairs = None
         self.must_reviews = None
-        self.clues = None
+        self.clues = []
         self.next_prompt_seconds = [3.0]
         self.ss = None
         self.is_other_os = None # don't know yet
@@ -873,8 +1048,7 @@ class GrubWiz:
         spinner.add_key('delete', 'd - delete selected backup [in restore screen]', category='action')
         spinner.add_key('tag', 't - tag/retag a backup file [in restore screen]', category='action')
         spinner.add_key('view', 'v - view a backup file [in restore screen]', category='action')
-        spinner.add_key('write', 'w,ENTER - write params and run "grub-update"',
-                        category='action', keys=[ord('w'), 10, 13])
+        spinner.add_key('write', 'w - write params and run "grub-update"', category='action')
         spinner.add_key('escape', 'ESC - back to prev screen',
                         category="action", keys=[27,])
         spinner.add_key('slash', '/ - filter pattern', category='action')
@@ -892,9 +1066,7 @@ class GrubWiz:
         win_opts.dialog_abort = True
         self.win = ConsoleWindow(win_opts)
 
-        self.ss = ScreenStack(self.win, self.spins, SCREENS)
-
-        # Initialize screen objects
+        # Initialize screen objects first (before ScreenStack)
         self.screens = {
             HOME_ST: HomeScreen(self),
             REVIEW_ST: ReviewScreen(self),
@@ -904,7 +1076,10 @@ class GrubWiz:
             HELP_ST: HelpScreen(self),
         }
 
-    def _get_enums_regex(self):
+        # Create ScreenStack with screen objects for hook invocation
+        self.ss = ScreenStack(self.win, self.spins, SCREENS, self.screens)
+
+    def get_enums_regex(self):
         """ TBD"""
         enums, regex, param_name, value = None, None, None, None
         pos = self.win.pick_pos
@@ -948,7 +1123,7 @@ class GrubWiz:
         """ TBD """
         if not self.show_hidden_warns:
             warn_key = f'{param_name} {hey[1]}'
-            return self.warn_db.is_hidden_warn(warn_key)
+            return self.warn_db.is_inhibit(warn_key)
         return False
 
     def get_diffs(self):
@@ -1348,7 +1523,7 @@ class GrubWiz:
         self.win.start_curses()
         if ok:
             self._reinit()
-            self.ss = ScreenStack(self.win, self.spins, SCREENS)
+            self.ss = ScreenStack(self.win, self.spins, SCREENS, self.screens)
             self.do_start_up_backup()
 
     def find_in(self, value, enums=None, cfg=None):
@@ -1377,6 +1552,47 @@ class GrubWiz:
                        next_idx=next_idx, next_value=next_value,
                        prev_idx=prev_idx, prev_value=prev_value)
 
+    def navigate_to(self, screen_num):
+        """
+        Navigate to a screen with validation hooks.
+
+        Args:
+            screen_num: Screen number to navigate to
+
+        Returns:
+            True if navigation succeeded, False if blocked
+        """
+        result = self.ss.push(screen_num, self.prev_pos)
+        if result is not None:
+            self.prev_pos = result
+            return True
+        return False
+
+    def navigate_back(self):
+        """
+        Navigate back to previous screen with validation hooks.
+
+        Returns:
+            True if navigation succeeded, False if blocked or no stack
+        """
+        result = self.ss.pop()
+        if result is not None:
+            self.prev_pos = result
+            # Reset cached data when going back
+            self.must_reviews = None
+            self.bak_lines, self.bak_path = None, None
+            return True
+        return False
+
+    def handle_escape(self):
+        """
+        Generic escape handler with context awareness.
+        Returns:
+            True if escape was handled, False otherwise
+        """
+        if self.ss.stack:
+            return self.navigate_back()
+        return False
 
     def main_loop(self):
         """ TBD """
@@ -1407,46 +1623,36 @@ class GrubWiz:
                 if spins.quit:
                     spins.quit = False
                     if self.ss.is_curr(RESTORE_ST):
-                        self.prev_pos = self.ss.pop()
+                        self.navigate_back()
                     else:
                         break
 
-                if self.ss.act_in('escape', (REVIEW_ST, RESTORE_ST,
-                                 VIEW_ST, WARN_ST, HELP_ST)):
-                    if self.ss.stack:
-                        self.prev_pos = self.ss.pop()
-                        self.must_reviews = None  # Reset cached review data
-                        self.bak_lines, self.bak_path = None, None
-                if self.ss.act_in('help_mode', (HOME_ST, REVIEW_ST, RESTORE_ST)):
-                    self.prev_pos = self.ss.push(HELP_ST, self.prev_pos)
+                # Handle escape with new generic handler
+                if self.ss.act_in('escape'):
+                    self.handle_escape()
+
+                # Handle help mode navigation
+                if self.ss.act_in('help_mode'):
+                    self.navigate_to(HELP_ST)
 
                 # Actions delegated to screen classes
-                screen_actions = {
-                    'cycle_next': (HOME_ST, REVIEW_ST),
-                    'cycle_prev': (HOME_ST, REVIEW_ST),
-                    'undo': REVIEW_ST,
-                    'show_hidden': (REVIEW_ST, HOME_ST),
-                    'edit': (HOME_ST, REVIEW_ST),
-                    'expert_edit': (HOME_ST, REVIEW_ST),
-                    'hide': (HOME_ST, REVIEW_ST),
-                    'write': (HOME_ST, REVIEW_ST),
-                    'restore': RESTORE_ST,
-                    'delete': (HOME_ST, REVIEW_ST, RESTORE_ST),
-                    'tag': RESTORE_ST,
-                    'view': RESTORE_ST,
-                    'slash': WARN_ST,
-                }
-                for action, screens in screen_actions.items():
-                    if self.ss.act_in(action, screens):
-                        self.screens[self.ss.curr.num].handle_action(action)
+                screen_actions = [
+                    'cycle_next', 'cycle_prev', 'undo', 'show_hidden', 'edit',
+                    'expert_edit', 'hide', 'write', 'restore', 'delete', 'tag',
+                    'view', 'slash'
+                ]
+                current_screen = self.screens[self.ss.curr.num]
+                for action in screen_actions:
+                    if self.ss.act_in(action):
+                        current_screen.handle_action(action)
 
+                # Handle navigation to restore screen
                 if self.ss.act_in('enter_restore', (HOME_ST, REVIEW_ST)):
-                    self.prev_pos = self.ss.push(RESTORE_ST, self.prev_pos)
-                    self.do_start_up_backup()
+                    self.navigate_to(RESTORE_ST)
 
-                if self.ss.act_in('enter_warnings', (REVIEW_ST)):
-                    self.prev_pos = self.ss.push(WARN_ST, self.prev_pos)
-                    self.do_start_up_backup()
+                # Handle navigation to warnings screen
+                if self.ss.act_in('enter_warnings'):
+                    self.navigate_to(WARN_ST)
 
             win.clear()
 

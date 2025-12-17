@@ -240,22 +240,14 @@ class WizValidator:
         # if _DEFAULT is saved, then _SAVEDEFAULT must be true
         p1, v1, p2, v2 = getvals('GRUB_DEFAULT', 'GRUB_SAVEDEFAULT')
         bad = p1 and avi(v1) in quotes('saved') and avi(v2) not in quotes('true')
-        hey_if(bad, p2, 4, f'must be "true" since {sh(p1)} is "saved"')
+        hey_if(bad, p1, 4, f'when "saved", {sh(p2)} must be "true"')
+        hey_if(bad, p2, 4, f'when not "true", {sh(p1)} cannot be "saved"')
 
         # TIMEOUT=0 & TIMEOUT_STYLE=hidden (critical - unrecoverable state)
         p1, v1, p2, v2 = getvals('GRUB_TIMEOUT', 'GRUB_TIMEOUT_STYLE')
         bad = p1 and (avi(v1) in quotes('0') or avi(v1) in quotes('0.0')) and avi(v2) in quotes('hidden')
-        hey_if(bad, p1, 4, f'should be positive int when {sh(p2)}="hidden"')
-
-        # TIMEOUT > 0 but TIMEOUT_STYLE is NOT menu
-        p1, v1, p2, v2 = getvals('GRUB_TIMEOUT', 'GRUB_TIMEOUT_STYLE')
-        is_positive = False
-        try:
-            is_positive = p1 and exist(v1) and float(unquote(v1)) > 0
-        except (ValueError, TypeError):
-            pass
-        bad = is_positive and avi(v2) not in quotes('menu')
-        hey_if(bad, p2, 4, f'should be "menu" when {sh(p1)} > 0')
+        hey_if(bad, p1, 4, f'when 0, {sh(p2)} cannot be "hidden"')
+        hey_if(bad, p2, 4, f'when "hidden", {sh(p1)} cannot be 0')
 
         # 'quiet' belongs only in GRUB_CMDLINE_LINUX_DEFAULT
         p1, v1, p2, v2 = getvals('GRUB_CMDLINE_LINUX_DEFAULT', 'GRUB_CMDLINE_LINUX')
@@ -285,7 +277,8 @@ class WizValidator:
         # Recovery cmdline set but recovery disabled
         p1, v1, p2, v2 = getvals('GRUB_CMDLINE_LINUX_RECOVERY', 'GRUB_DISABLE_RECOVERY')
         bad = p1 and avi(v1) and avi(v2) in quotes('true')
-        hey_if(bad, p1, 2, f'set but {sh(p2)}="true" disables recovery mode')
+        hey_if(bad, p1, 2, f'when set, {sh(p2)} must not be "true"')
+        hey_if(bad, p2, 2, f'when "true", {sh(p1)} should not be set')
 
         # UUID types disabled (both or individually)
         p1, v1, p2, v2 = getvals('GRUB_DISABLE_LINUX_UUID', 'GRUB_DISABLE_LINUX_PARTUUID')
@@ -302,14 +295,14 @@ class WizValidator:
         val_in = unquote(avi(v1)) if exist(v1) else 'console'
         val_out = unquote(avi(v2)) if exist(v2) else ''
         bad = p1 and exist(v1) and val_out and val_in != val_out and 'serial' in val_out
-        hey_if(bad, p1, 2, f'should match {sh(p2)} when it is "serial"')
+        hey_if(bad, p1, 2, f'{sh(p2)} must have matching value')
 
         # Terminal OUTPUT should match INPUT when serial
         p1, v1, p2, v2 = getvals('GRUB_TERMINAL_INPUT', 'GRUB_TERMINAL_OUTPUT')
         val_in = unquote(avi(v1)) if exist(v1) else 'console'
         val_out = unquote(avi(v2)) if exist(v2) else ''
         bad = p2 and exist(v2) and val_out and val_in != val_out and 'serial' in val_in
-        hey_if(bad, p2, 2, f'should match {sh(p1)} when it is "serial"')
+        hey_if(bad, p2, 2, f'{sh(p1)} must have matching value')
 
         # SERIAL_COMMAND set but neither terminal is serial
         p1, v1, p2, v2, p3, v3 = getvals('GRUB_SERIAL_COMMAND', 'GRUB_TERMINAL_INPUT', 'GRUB_TERMINAL_OUTPUT')
@@ -322,19 +315,22 @@ class WizValidator:
         p1, v1, p2, v2 = getvals('GRUB_SERIAL_COMMAND', 'GRUB_TERMINAL_INPUT')
         term_in = unquote(avi(v2)) if exist(v2) else 'console'
         bad = p2 and 'serial' in term_in and not exist(v1)
-        hey_if(bad, p2, 2, f'"serial" requires {sh(p1)} to be set')
+        hey_if(bad, p1, 2, f'when not set, {sh(p2)} cannot be "serial"')
+        hey_if(bad, p2, 2, f'when "serial", {sh(p1)} must be set')
 
         # TERMINAL_OUTPUT is serial but no SERIAL_COMMAND
         p1, v1, p2, v2 = getvals('GRUB_SERIAL_COMMAND', 'GRUB_TERMINAL_OUTPUT')
         term_out = unquote(avi(v2)) if exist(v2) else ''
         bad = p2 and 'serial' in term_out and not exist(v1)
-        hey_if(bad, p2, 2, f'"serial" requires {sh(p1)} to be set')
+        hey_if(bad, p1, 2, f'when not set, {sh(p2)} cannot be "serial"')
+        hey_if(bad, p2, 2, f'when "serial", {sh(p1)} must be set')
 
         # GRUB_TERMINAL contains serial but no SERIAL_COMMAND
         p1, v1, p2, v2 = getvals('GRUB_SERIAL_COMMAND', 'GRUB_TERMINAL')
         terminal = unquote(avi(v2))
         bad = p2 and 'serial' in terminal and not exist(v1)
-        hey_if(bad, p2, 2, f'"serial" requires {sh(p1)} to be configured')
+        hey_if(bad, p1, 2, f'when not set, {sh(p2)} cannot be "serial"')
+        hey_if(bad, p2, 2, f'when "serial", {sh(p1)} must be configured')
 
         # GRUB_TERMINAL=console with graphical settings (GFXMODE, BACKGROUND, THEME)
         p1, v1, p2, v2, p3, v3, p4, v4 = getvals('GRUB_TERMINAL', 'GRUB_GFXMODE', 'GRUB_BACKGROUND', 'GRUB_THEME')
@@ -347,12 +343,13 @@ class WizValidator:
         p1, v1, p2, v2 = getvals('GRUB_TERMINAL', 'GRUB_GFXMODE')
         terminal = unquote(avi(v1))
         bad = p1 and 'gfxterm' in terminal and not exist(v2)
-        hey_if(bad, p1, 1, f'gfxterm works better with {sh(p2)} set')
+        hey_if(bad, p1, 1, f'when gfxterm, {sh(p2)} should be set')
 
         # SAVEDEFAULT=true but DEFAULT is numeric (menu can reorder)
         p1, v1, p2, v2 = getvals('GRUB_SAVEDEFAULT', 'GRUB_DEFAULT')
         default_value = avi(v2) if exist(v2) else '0'
         bad = p1 and avi(v1) in quotes('true') and unquote(default_value).isdigit()
+        hey_if(bad, p1, 1, f'when "true", {sh(p2)} should not be numeric')
         hey_if(bad, p2, 1, f'avoid numeric when {sh(p1)}="true"')
 
         # GRUB_CMDLINE_LINUX has spaces but not quoted
@@ -409,18 +406,25 @@ class WizValidator:
             has_enums = isinstance(enums, dict) and len(enums) > 0
             has_no_regex = not regex
 
-            p1, v1 = getvals(param_name)
-            if p1 and exist(v1) and has_enums and has_no_regex:
-                value = str(unquote(v1))
-                found = any(value == unquote(str(k)) for k in enums.keys())
-                bad = not found
-            hey_if(bad, p1, 3, 'value not in list of allowed values')
+            if has_enums and has_no_regex:
+                p1, v1 = getvals(param_name)
+                if p1 and exist(v1):
+                    value = str(unquote(v1))
+                    found = any(value == unquote(str(k)) for k in enums.keys())
+                    bad = not found
+                hey_if(bad, p1, 3, 'value not in list of allowed values')
 
         # GRUB_TIMEOUT over recommended limit
         p1, v1 = getvals('GRUB_TIMEOUT')
         val = str(unquote(v1)) if exist(v1) else ''
         bad = p1 and exist(v1) and val and val.isdigit() and int(val) > 60
         hey_if(bad, p1, 1, 'over 60s seems ill advised')
+
+        # GRUB_TIMEOUT set to -1 (wait indefinitely)
+        p1, v1 = getvals('GRUB_TIMEOUT')
+        val = str(unquote(v1)) if exist(v1) else ''
+        bad = p1 and exist(v1) and val in ('-1', '"-1"', "'-1'")
+        hey_if(bad, p1, 1, '-1 (wait indefinitely) seems ill advised')
 
         # GRUB_RECORDFAIL_TIMEOUT over recommended limit
         p1, v1 = getvals('GRUB_RECORDFAIL_TIMEOUT')

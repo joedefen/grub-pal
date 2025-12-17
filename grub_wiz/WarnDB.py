@@ -2,6 +2,7 @@
 """
 TBD
 """
+# pylint: disable=too-many-instance-attributes
 
 from pathlib import Path
 from typing import Set, Dict, Any, Optional
@@ -36,8 +37,7 @@ class WarnDB:
         self.yaml_path: Path = self.config_dir / filename
         self.param_cfg = param_cfg # has out-of-box state
 
-        # self.params: Set[str] = set()  # hidden params (excluded from everything)
-        self.warns: Set[str] = set()   # Suppressed/inhibited warnings (keys)
+        self.inhibits: Set[str] = set()   # Suppressed/inhibited warnings (keys)
         self.all_info: Dict[str, int] = {}  # All warning info: key -> severity (1-4)
         self.dirty_count: int = 0
         self.last_read_time: Optional[float] = None
@@ -47,31 +47,20 @@ class WarnDB:
         # Note: config_dir is already created by UserConfigDir
         self.refresh()
 
-    def init_hides(self):
-        """ Initialize warns database (no longer used for params). """
-        # No initialization needed - warns are populated dynamically
-        return True
-
     def refresh(self):
         """
             Reads the hidden items from the YAML file,
             clearing the current state on failure.
         """
-        # self.params.clear()
-        self.warns.clear()
         self.last_read_time = None
         self.dirty_count = 0 # Assume file state is clean
-
-        if not self.yaml_path.exists():
-            return self.init_hides()
 
         try:
             with self.yaml_path.open('r') as f:
                 data: Dict[str, Any] = yaml.load(f) or {}
 
             # Safely cast list data to sets
-            # self.params.update(set(data.get('params', [])))
-            self.warns.update(set(data.get('warns', [])))
+            self.inhibits = set(data.get('warns', []))
 
             # Record file modification time
             self.last_read_time = self.yaml_path.stat().st_mtime
@@ -80,7 +69,8 @@ class WarnDB:
         except (IOError, YAMLError) as e:
             # Any failure leads to empty sets, allowing the application to continue.
             print(f"Warning: Failed to read hidden-items.yaml: {e}")
-            return self.init_hides()
+            self.inhibits.clear()
+            return True
 
     def write_if_dirty(self) -> bool:
         """Writes the current hidden state to disk if the dirty count is > 0."""
@@ -88,8 +78,7 @@ class WarnDB:
             return False
 
         data = {
-            # 'params': sorted(list(self.params)),
-            'warns': sorted(list(self.warns))
+            'warns': sorted(list(self.inhibits))
         }
 
         try:
@@ -109,30 +98,19 @@ class WarnDB:
             print(f"Error writing or setting permissions on hidden-items.yaml: {e}")
             return False
 
-#   def hide_param(self, name: str):
-#       """Hides a parameter by name (e.g., 'GRUB_DEFAULT')."""
-#       if name not in self.params:
-#           self.params.add(name)
-#           self.dirty_count += 1
-
-
-#   def unhide_param(self, name: str):
-#       """Unhides a parameter by name."""
-#       if name in self.params:
-#           self.params.remove(name)
-#           self.dirty_count += 1
-
-    def hide_warn(self, composite_id: str):
+    def inhibit(self, composite_id: str, hide: bool):
         """Hides a warning by composite ID (e.g., 'GRUB_DEFAULT.3')."""
-        if composite_id not in self.warns:
-            self.warns.add(composite_id)
+        hidden = self.is_inhibit(composite_id)
+        if hide and not hidden:
+            self.inhibits.add(composite_id)
+            self.dirty_count += 1
+        elif not hide and hidden:
+            self.inhibits.remove(composite_id)
             self.dirty_count += 1
 
-    def unhide_warn(self, composite_id: str):
-        """Unhides a warning by composite ID."""
-        if composite_id in self.warns:
-            self.warns.remove(composite_id)
-            self.dirty_count += 1
+    def is_inhibit(self, composite_id: str) -> bool:
+        """Checks if a warning should be suppressed."""
+        return composite_id in self.inhibits
 
     def audit_info(self, all_warn_info: dict):
         """
@@ -152,26 +130,18 @@ class WarnDB:
 
         self.audited = True
 
-        # Update all_info with new data
-        self.all_info = all_warn_info.copy()
+        # Update all_info with new data (write with sorted keys so looks good)
+        self.all_info = {k: all_warn_info[k] for k in sorted(all_warn_info)}
 
         # Purge orphaned suppressed warnings
         orphans = []
-        for key in self.warns:
+        for key in self.inhibits:
             if key not in all_warn_info:
                 orphans.append(key)
 
         for key in orphans:
-            self.warns.discard(key)
+            self.inhibits.discard(key)
             self.dirty_count += 1
-
-#   def is_hidden_param(self, name: str) -> bool:
-#       """Checks if a parameter should be hidden."""
-#       return name in self.params
-
-    def is_hidden_warn(self, composite_id: str) -> bool:
-        """Checks if a warning should be suppressed."""
-        return composite_id in self.warns
 
     def is_dirty(self) -> bool:
         """Indicates if there are unsaved changes."""
