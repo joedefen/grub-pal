@@ -15,9 +15,9 @@ from typing import Optional, Set
 from ruamel.yaml import YAML
 
 try:
-    from .UserConfigDir import get_user_config_dir
+    from .UserConfigDir import UserConfigDir
 except Exception:
-    from UserConfigDir import get_user_config_dir
+    from UserConfigDir import UserConfigDir
 
 yaml = YAML()
 yaml.preserve_quotes = True
@@ -39,7 +39,7 @@ class ParamDiscovery:
     """Discovers and caches system-supported GRUB parameters"""
     singleton = None
 
-    def __init__(self, user_config=None):
+    def __init__(self):
         """
         Args:
             user_config: UserConfigDir instance (uses singleton if not provided)
@@ -48,7 +48,7 @@ class ParamDiscovery:
             raise RuntimeError("ParamDiscovery is a singleton. Use get_singleton() instead.")
         ParamDiscovery.singleton = self
         
-        self.user_config = user_config if user_config else get_user_config_dir("grub-wiz")
+        self.user_config = UserConfigDir.get_singleton("grub-wiz")
         self.config_dir = self.user_config.config_dir
         self.cache_file = self.config_dir / 'system-params.yaml'
         self.cached_data = None
@@ -59,11 +59,11 @@ class ParamDiscovery:
         self._manual_disabled = self.cached_data['manual_disabled'] if self.cached_data else False        
 
     @staticmethod
-    def get_singleton(user_config=None):
+    def get_singleton():
         """ Gets the singleton object ... do not use constructor directly.
         """
         if not ParamDiscovery.singleton:
-            ParamDiscovery(user_config=user_config)
+            ParamDiscovery()
         return ParamDiscovery.singleton
 
     def manual_enable(self, state: Optional[bool] = None) -> bool:

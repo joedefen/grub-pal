@@ -3,6 +3,7 @@
 """
 from importlib.resources import files
 from ruamel.yaml import YAML
+from .UserConfigDir import UserConfigDir
 
 yaml = YAML()
 yaml.preserve_quotes = True
@@ -17,7 +18,7 @@ class CannedConfig:
         'enums': {},  # key: enum name, value enum description
         'guidance': '',  # often lengthy, may have embedded newlines
     }
-    def __init__(self):
+    def OLD__init__(self):
         # 1. Get a Traversable object for the 'grub_wiz' package directory
         resource_path = files('grub_wiz') / 'canned_config.yaml'
 
@@ -27,46 +28,52 @@ class CannedConfig:
         self.data = yaml.load(yaml_string)
     # In CannedConfig.__init__()
 
-    def PROPOSED__init__(self):
+    def __init__(self):
         # 1. Load packaged canned_config
         resource_path = files('grub_wiz') / 'canned_config.yaml'
         self.data = yaml.load(resource_path.read_text())
+        self.using_path = resource_path
+
+        config_dir = UserConfigDir.get_singleton().config_dir
         
         # 2. Dump reference copy to config dir
-        ref_path = user_config_dir / 'canned_config.yaml.REFERENCE'
-        if not ref_path.exists() or needs_update(ref_path):
+        ref_path = config_dir / 'canned_config.yaml'
+        if not ref_path.exists():
             ref_path.write_text(resource_path.read_text())
         
         # 3. Try to load user's custom config
-        custom_path = user_config_dir / 'custom_config.yaml'
+        custom_path = config_dir / 'custom_config.yaml'
         if custom_path.exists():
             try:
                 custom_data = yaml.load(custom_path.read_text())
-                if self.validate_schema(custom_data):
+                err =  self.validate_schema(custom_data)
+                if err is None:
                     self.data = custom_data  # Or merge if you prefer
+                    self.using_path = custom_path
                 else:
-                    print(f"WARNING: {custom_path} failed validation, using packaged config")
+                    print(f"WARNING: {custom_path} invalid ({err}), using canned config")
             except Exception as e:
-                print(f"WARNING: Cannot load {custom_path}: {e}")
+                print(f"WARNING: Cannot yaml.load {custom_path}: {e}")
 
-        def PROPOSED_validate_schema(self, data):
-            """Validate custom config has correct structure"""
-            if not isinstance(data, dict):
-                return False
-            
-            for section_name, params in data.items():
-                if not isinstance(params, dict):
-                    return False
-                for param_name, cfg in params.items():
-                    # Check required fields exist
-                    if not all(k in cfg for k in ('default', 'edit_re', 'enums', 'guidance')):
-                        return False
-                    # Check no extra fields (strict)
-                    if set(cfg.keys()) - set(self.default_cfg.keys()):
-                        return False
-            return True
-
-
+    def validate_schema(self, data):
+        """Validate custom config has correct structure"""
+        if not isinstance(data, dict):
+            return False
+        keys_set = set(self.default_cfg.keys())
+        
+        for section_name, params in data.items():
+            if not isinstance(params, dict):
+                return f'Section ({section_name!r} value not dict)'
+            for param_name, cfg in params.items():
+                if not param_name.startswith('GRUB_'):
+                    return f'Param ({param_name!r} is not GRUB_*)'
+                # Check required fields exist
+                if not all(k in cfg for k in keys_set):
+                    return f'Param ({param_name!r} dict missing keys'
+                # Check no extra fields (strict)
+                if set(cfg.keys()) - keys_set:
+                    return f'Param ({param_name!r} dict extra keys'
+        return None
 
     def dump(self):
       """ Dump the wired/initial configuration"""

@@ -1146,7 +1146,8 @@ class GrubWiz:
         self.param_defaults = {}
         self.must_reviews = None
         self.ss = None
-        self.sections = CannedConfig().data
+        self.canned_config = CannedConfig()
+        self.sections = self.canned_config.data
 
         names = []
         for params in self.sections.values():
@@ -1845,6 +1846,8 @@ def main():
                         help='control/show parameter discovery state')
     parser.add_argument('--factory-reset', action='store_true',
                         help='restore out-of-box experience (but keeping .bak files)')
+    parser.add_argument('--validate-custom-config', action='store_true',
+                        help='test load ~/.config/grub-wiz/custom_config.yaml')
     parser.add_argument('--validator-demo', action='store_true',
                         help='for test only: run validator demo')
     opts = parser.parse_args()
@@ -1852,6 +1855,12 @@ def main():
     wiz = GrubWiz()
     if opts.validator_demo:
         wiz.wiz_validator.demo(wiz.param_defaults)
+        sys.exit(0)
+        
+    if opts.validate_custom_config:
+        print(f'grub-wiz: using {wiz.canned_config.using_path}')
+        if 'custom' not in str(wiz.canned_config.using_path):
+            print("NOTE: custom config NOT being used")
         sys.exit(0)
 
     if opts.discovery is not None:

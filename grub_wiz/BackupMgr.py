@@ -10,12 +10,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, Union
 
-from .UserConfigDir import get_user_config_dir
+from .UserConfigDir import UserConfigDir
 
 # --- Constants ---
 
 GRUB_DEFAULT_PATH = Path("/etc/default/grub")
-USER_CONFIG = get_user_config_dir("grub-wiz")
+USER_CONFIG = UserConfigDir.get_singleton("grub-wiz")
 GRUB_CONFIG_DIR = USER_CONFIG.config_dir
 
 # Regex pattern for identifying backup files: YYYYMMDD-HHMMSS-{CHECKSUM}.{TAG}.bak

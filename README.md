@@ -145,8 +145,6 @@ If so, add these manually to /etc/default/grub - grub-wiz will recognize and pre
 
 #### Custom Parameter Configuration (Advanced)
 
-**TODO**
-
 For advanced users who need to modify parameter definitions:
 
 1. grub-wiz creates `~/.config/grub-wiz/canned_config.yaml` as a template

@@ -19,6 +19,7 @@ class UserConfigDir:
     Handles detection of real user (even when running via sudo) and
     provides utilities for setting correct file ownership.
     """
+    singleton = None
     _instance: Optional['UserConfigDir'] = None
 
     def __new__(cls, app_name: str = "grub-wiz"):
@@ -29,13 +30,23 @@ class UserConfigDir:
 
     def __init__(self, app_name: str = "grub-wiz"):
         # Only initialize once (singleton pattern)
-        if self._initialized:
-            return
+        if UserConfigDir.singleton:
+            raise RuntimeError("Use UserConfigDir.get_singleton(), not constructor")
+        UserConfigDir.singleton = self
 
         self.app_name = app_name
         self._detect_user()
         self._ensure_config_dir()
-        self._initialized = True
+    
+    @staticmethod
+    def get_singleton(app_name: str = 'grub-wiz'):
+        """ Get or create the UserConfigDir singleton instance.
+        Args: app_name: Application name for config directory
+        Returns: UserConfigDir singleton instance
+        """
+        if not UserConfigDir.singleton:
+            UserConfigDir.singleton = UserConfigDir(app_name)
+        return UserConfigDir.singleton
 
     def _detect_user(self):
         """
@@ -129,17 +140,3 @@ class UserConfigDir:
             'gid': self.gid,
             'config_dir': self.config_dir
         }
-
-
-# Convenience function for getting the singleton instance
-def get_user_config_dir(app_name: str = "grub-wiz") -> UserConfigDir:
-    """
-    Get or create the UserConfigDir singleton instance.
-
-    Args:
-        app_name: Application name for config directory
-
-    Returns:
-        UserConfigDir singleton instance
-    """
-    return UserConfigDir(app_name)

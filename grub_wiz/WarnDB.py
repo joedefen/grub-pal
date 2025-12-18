@@ -9,7 +9,7 @@ from typing import Set, Dict, Any, Optional
 from ruamel.yaml import YAML, YAMLError
 
 
-from .UserConfigDir import get_user_config_dir
+from .UserConfigDir import UserConfigDir
 
 yaml = YAML()
 yaml.default_flow_style = False
@@ -22,8 +22,7 @@ class WarnDB:
     are suppressed (inhibited).
     """
 
-    def __init__(self, param_cfg,
-                 user_config=None, filename: str = 'hidden-items.yaml'):
+    def __init__(self, param_cfg, filename: str = 'hidden-items.yaml'):
         """
         Initializes the class, creates the config directory if necessary,
         and performs the initial read/refresh.
@@ -32,7 +31,7 @@ class WarnDB:
             user_config: UserConfigDir instance (uses singleton if not provided)
             filename: Name of the YAML file to store hidden items
         """
-        self.user_config = user_config if user_config else get_user_config_dir("grub-wiz")
+        self.user_config = UserConfigDir.get_singleton("grub-wiz")
         self.config_dir: Path = self.user_config.config_dir
         self.yaml_path: Path = self.config_dir / filename
         self.param_cfg = param_cfg # has out-of-box state
