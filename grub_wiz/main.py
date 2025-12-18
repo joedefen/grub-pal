@@ -48,6 +48,7 @@ from .WarnDB import WarnDB
 from .GrubWriter import GrubWriter
 from .WizValidator import WizValidator
 from .ParamDiscovery import ParamDiscovery
+from .UserConfigDir import UserConfigDir
 
 HOME_ST, REVIEW_ST, RESTORE_ST, VIEW_ST, COMPARE_ST, WARN_ST, HELP_ST  = 0, 1, 2, 3, 4, 5, 6
 SCREENS = 'HOME REVIEW RESTORE VIEW COMPARE WARN HELP'.split() # screen names
@@ -328,6 +329,21 @@ class HomeScreen(Screen):
             line = line [:self.win.cols-2] + '⯈'
         return line.splitlines()
 
+
+    @staticmethod
+    def left_side_box(lines, indent=3):
+        """ draw a box """
+        if len(lines) <= 0:
+            return
+        rv = []
+        chars = ['┃'] + ['│'] * (len(lines)-1)
+        if len(chars) >= 2:
+            chars[0], chars[-1] = '╭', '╰'
+        for idx, line in enumerate(lines):
+            rv.append(line[:indent] + chars[idx] + line[indent+1:])
+        return rv
+
+
     def draw_body(self):
         """ TBD """
         gw = self.gw
@@ -392,6 +408,8 @@ class HomeScreen(Screen):
                     hide_cnt = 1 + len(emits) - view_size
                     emits = emits[0:view_size-1]
                     emits.append(f'... beware: {hide_cnt} HIDDEN lines ...')
+                if len(emits) > 1:
+                    emits = [emits[0]] + self.left_side_box(emits[1:])
 
                 for emit in emits:
                     win.add_body(emit)
@@ -467,8 +485,10 @@ class HomeScreen(Screen):
         # if any param is hidden on this screen, then show
         header, cnt = '', gw.hidden_stats.param
         if cnt:
-            header = 's:hide' if gw.show_hidden_params else '[s]how'
-            header += f'-{cnt}-inact-params'
+            if gw.show_hidden_params:
+                header += f's:hide-{cnt}-inact-params'
+            else:
+                header += f'[s]how-all-params({cnt}-inact)'
         header = f'{header:<{tab.lwid}}'
 
         self.add_common_head2(header)
@@ -644,7 +664,7 @@ class ReviewScreen(HomeScreen):
                            and str(ns.value) != str(ns.old_value))
             if changed:
                 pos += 1
-                self.win.add_body(f'{"was":>{tab.lwid}}  {ns.old_value}')
+                self.win.add_body(f'{"└──────── was":>{tab.lwid}}  {ns.old_value}')
                 gw.clues.append(Clue('nop'))
 
             for hey in ns.heys:
@@ -654,7 +674,7 @@ class ReviewScreen(HomeScreen):
 
                 if not is_inhibit or gw.show_hidden_warns:
                     mark = '✘' if is_inhibit else ' '
-                    sub_text = f'{mark} {hey[0]:>4}'
+                    sub_text = f'└─── {mark} {hey[0]:>4}'
                     line = f'{sub_text:>{tab.lwid}}  {hey[1]}'
                     cnt = gw.add_wrapped_body_line(line,
                                         tab.lwid+2, pos==picked)
@@ -664,6 +684,8 @@ class ReviewScreen(HomeScreen):
 
             if is_current:
                 emits = gw.drop_down_lines(param_name)
+                if len(emits) > 1:
+                    emits = self.left_side_box(emits)
                 pos += len(emits)
                 for emit in emits:
                     self.win.add_body(emit)
@@ -700,7 +722,6 @@ class RestoreScreen(Screen):
     """RESTORE screen - backup management"""
     # Can be accessed from HOME or REVIEW screens
     come_from_whitelist = [HOME_ST, REVIEW_ST]
-    baseline_bak = None  # what to compare to
 
     def __init__(self, grub_wiz):
         """Constructor handles initial backup list setup"""
@@ -709,6 +730,7 @@ class RestoreScreen(Screen):
         self.gw.do_start_up_backup()
         self.gw.refresh_backup_list()
         self.bak_paths = []
+        self.baseline_bak = None  # what to compare to
 
     def on_resume(self):
         """Refresh backup list when resuming"""
@@ -738,10 +760,10 @@ class RestoreScreen(Screen):
             for pair in gw.ordered_backup_pairs:
                 if pair[1] == ref:
                     new_ref = ref
-                break
+                    break
         if not new_ref and gw.ordered_backup_pairs:
             new_ref = gw.ordered_backup_pairs[-1][1]
-        RestoreScreen.baseline_bak = new_ref
+        self.baseline_bak = new_ref
 
     def add_body(self):
         """ TBD """
@@ -749,6 +771,7 @@ class RestoreScreen(Screen):
         if not gw.ordered_backup_pairs:
             return
         self._ensure_reference()
+        self.bak_paths = []
         for pair in gw.ordered_backup_pairs:
             checksum, bak_path = pair[0], pair[1]
             prefix = '●' if checksum == gw.grub_checksum else ' '
@@ -758,9 +781,11 @@ class RestoreScreen(Screen):
 
     def baseline_ACTION(self):
         """Handle 'b' key on RESTORE screen - baseline for CMP"""
+        gw = self.gw
         pos = self.win.pick_pos
-        if 0 <= pos < len(self.bak_paths):
-            RestoreScreen.baseline_bak = self.bak_paths[pos]
+        if 0 <= pos < len(gw.ordered_backup_pairs):
+            bak_path = gw.ordered_backup_pairs[pos][1]
+            self.baseline_bak = bak_path
 
     def compare_ACTION(self):
         """Handle 'c' key on RESTORE screen - set in compare mode"""
@@ -774,7 +799,6 @@ class RestoreScreen(Screen):
                     compare_screen = gw.screens[COMPARE_ST]
                     compare_screen.bak1 = bak_path
                     compare_screen.bak2 = ref_path
-
 
     def restore_ACTION(self):
         """Handle 'r' key on RESTORE screen - restore selected backup"""
@@ -978,7 +1002,7 @@ class ViewScreen(Screen):
 class WarnScreen(Screen):
     """WARNINGS Screen"""
     # Can only be accessed from REVIEW screen
-    come_from_whitelist = [REVIEW_ST]
+    come_from_whitelist = [HOME_ST, REVIEW_ST]
 
     def __init__(self, grub_wiz):
         """Constructor initializes search state"""
@@ -1008,8 +1032,8 @@ class WarnScreen(Screen):
         if 0 <= pos < len(self.keys):
             key = self.keys[pos]
             inh = db.is_inhibit(key)
-        line = 'WARNINGS'
-        line += f"   [x]:{'allow' if inh else 'inh'}"
+        line = 'WARNINGS-CONFIG'
+        line += f"   [x]:{'allow-warning' if inh else 'inhibit-warning'}"
         line += f'   /{self.search}'
         line += '   ESC=back [q]uit'
         gw.add_fancy_header(line)
@@ -1072,7 +1096,8 @@ class WarnScreen(Screen):
 
         while True:
             prompt = f'Enter search pattern [{hint}]'
-            pattern = self.win.answer(prompt=prompt, seed=str(pattern), height=2)
+            pattern = self.win.answer(prompt=prompt,
+                                  seed=str(pattern), height=1)
             if pattern is None: # aborted
                 return
 
@@ -1101,6 +1126,13 @@ class HelpScreen(Screen):
 class GrubWiz:
     """ TBD """
     singleton = None
+
+    # parameters to give more answer space to
+    long_params = ('GRUB_CMDLINE_LINUX GRUB_CMDLINE_LINUX_DEFAULT'
+            ' GRUB_CMDLINE_XEN_DEFAULT GRUB_BADRAM GRUB_PRELOAD_MODULES'
+            ' GRUB_SERIAL_COMMAND GRUB_GFXMODE GRUB_THEME GRUB_BACKGROUND'
+            ' GRUB_TERMINAL_INPUT / GRUB_TERMINAL_OUTPUT').split()
+
     def __init__(self):
         GrubWiz.singleton = self
         self.win = None # place 1st
@@ -1240,7 +1272,7 @@ class GrubWiz:
         win_opts.ctrl_c_terminates = False
         win_opts.return_if_pos_change = True
         win_opts.single_cell_scroll_indicator = True
-        win_opts.dialog_abort = True
+        win_opts.dialog_abort = 'ESC'
         self.win = ConsoleWindow(win_opts)
 
         # Initialize screen objects first (before ScreenStack)
@@ -1341,7 +1373,7 @@ class GrubWiz:
         stripped = line.lstrip()
         if stripped:
             first_word_match = stripped.split()[0] if stripped.split() else ''
-            if first_word_match and first_word_match.isupper() and first_word_match.isalpha():
+            if first_word_match and re.match(r'^[\w-]+$', first_word_match):
                 # Add leading whitespace
                 leading_space = line[:len(line) - len(stripped)]
                 if leading_space:
@@ -1522,6 +1554,10 @@ class GrubWiz:
         emits = [f'{lead}{wrap}' for wrap in wraps if wrap]
         return emits
 
+    @staticmethod
+    def _answer_height(param_name):
+        return 5 if param_name in GrubWiz.long_params else 1
+
     def edit_param(self, win, name, regex):
         """ Prompt user for answer until gets it right"""
 
@@ -1540,7 +1576,8 @@ class GrubWiz:
 
         while not valid:
             prompt = f'Edit {name} [{hint}]'
-            value = win.answer(prompt=prompt, seed=str(value), height=2)
+            value = win.answer(prompt=prompt, seed=str(value),
+                               height=self._answer_height(name))
             if value is None: # aborted
                 return
             valid = True # until proven otherwise
@@ -1567,7 +1604,8 @@ class GrubWiz:
 
         while not valid:
             prompt = f'Edit {name} [EXPERT MODE: {hint}]'
-            value = win.answer(prompt=prompt, seed=str(value), height=2)
+            value = win.answer(prompt=prompt, seed=str(value),
+                               height=self._answer_height(name))
             if value is None: # aborted
                 return
 
@@ -1615,7 +1653,8 @@ class GrubWiz:
         regex = r'^[-_A-Za-z0-9]+$'
         hint = f'regex={regex}'
         while True:
-            answer = self.win.answer(seed=seed, prompt=f"{prompt} [{hint}]]")
+            answer = self.win.answer(seed=seed,
+                                     prompt=f"{prompt} [{hint}]]", height=1)
             if answer is None:
                 return None
             answer = answer.strip()
@@ -1641,7 +1680,8 @@ class GrubWiz:
 
     def really_wanna(self, act):
         """ TBD """
-        answer = self.win.answer(seed='y', prompt=f"Enter 'yes' to {act}")
+        answer = self.win.answer(seed='y',
+                         prompt=f"Enter 'yes' to {act}", height=1)
         if answer is None:
             return False
         answer = answer.strip().lower()
@@ -1658,26 +1698,36 @@ class GrubWiz:
 
         self.win.stop_curses()
         print("\033[2J\033[H") # 'clear'
-        print('\n\n===== Left grub-wiz to update GRUB ====> ')
+        print('\n\n===== Leaving grub-wiz screens to update GRUB ====> ')
         # print('Check for correctness...')
         # print('-'*60)
         # print(contents)
         # print('-'*60)
+        config_dir = UserConfigDir.get_singleton().config_dir
+        candidate_path = config_dir / 'etc_default_grub_candidate'
+
         ok = True
-        commit_rv = self.grub_file.write_file()
-        if not commit_rv: # failure
+        write_rv = self.grub_file.write_file(candidate_path)
+        if not write_rv: # failure
             ok = False
-        else:
+            
+        if ok:
+            commit_rv = self.grub_writer.commit_validated_grub_config(
+                candidate_path)
+            if not commit_rv:
+                ok = False
+        
+        if ok:
             install_rv = self.grub_writer.run_grub_update()
             if not install_rv[0]:
                 print(install_rv[1])
                 ok = False
         if ok:
-            os.system('clear ; echo "OK ... newly installed"')
+            os.system('\n\necho "OK ... /etc/grub newly written/updated"')
             print('\n\nUpdate successful! Choose:')
             print('  [r]eboot now')
             print('  [p]oweroff')
-            print('  ENTER to return to grub-wiz')
+            print('  ENTER to return to grub-wiz screen')
 
             choice = input('\n> ').strip().lower()
 

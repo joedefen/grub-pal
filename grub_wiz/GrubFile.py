@@ -403,10 +403,10 @@ class GrubFile:
                 with open(output_path, 'w', encoding='utf-8') as f:
                     for prefix, line in new_lines:
                         f.write(line)
-                print(f"OK: wrote {output_path!r}")
+                print(f"OK: wrote '{output_path}'")
             return True
         except Exception as wr_ex:
-            print(f"ERR: cannot write {output_path!r} [{wr_ex}]")
+            print(f"ERR: cannot write '{output_path}' [{wr_ex}]")
             return False
 
 

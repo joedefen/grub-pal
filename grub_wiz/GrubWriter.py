@@ -127,7 +127,8 @@ class GrubWriter:
         except Exception as e:
             return False, f"An unexpected error occurred during GRUB update execution: {e}"
 
-    def commit_validated_grub_config(self, contents: str) -> Tuple[bool, str]:
+    # def commit_validated_grub_config(self, contents: str) -> Tuple[bool, str]:
+    def commit_validated_grub_config(self, temp_path: Path) -> Tuple[bool, str]:
         """
         Safely commits new GRUB configuration contents to the target file.
 
@@ -153,23 +154,24 @@ class GrubWriter:
         if os.geteuid() != 0:
             return False, f"Permission Error: Root access is required to modify {self.target_path} and run validation/update tools."
 
-        temp_file: Optional[tempfile._TemporaryFileWrapper] = None
+#       temp_file: Optional[tempfile._TemporaryFileWrapper] = None
+
+#       try:
+#           # --- Step 1: Write to a Secure Temporary File ---
+#           temp_file = tempfile.NamedTemporaryFile(
+#               mode='w',
+#               delete=False,
+#               encoding='utf-8',
+#               suffix=".grub_check"
+#           )
+#           temp_file.write(contents)
+#           temp_file.close()
+
+#           temp_path = Path(temp_file.name)
+
+#           # --- Step 2: Run grub-script-check Validation ---
 
         try:
-            # --- Step 1: Write to a Secure Temporary File ---
-            temp_file = tempfile.NamedTemporaryFile(
-                mode='w',
-                delete=False,
-                encoding='utf-8',
-                suffix=".grub_check"
-            )
-            temp_file.write(contents)
-            temp_file.close()
-
-            temp_path = Path(temp_file.name)
-
-            # --- Step 2: Run grub-script-check Validation ---
-
             cmd = [self.check_command, str(temp_path)]
 
             print(f'+ {cmd[0]} {str(cmd[1])!r}')
@@ -213,11 +215,12 @@ class GrubWriter:
 
         finally:
             # --- Step 5: Clean up the temporary file ---
-            if temp_file and os.path.exists(temp_file.name):
+            if temp_path and os.path.exists(temp_path):
                 try:
-                    os.unlink(temp_file.name)
+                    os.unlink(temp_path)
                 except Exception as e:
-                    print(f"Warning: Failed to clean up temporary file {temp_file.name}: {e}", file=sys.stderr)
+                    print(f"Warning: Failed to rm temp file {temp_path}: {e}",
+                          file=sys.stderr)
 
 
 # --- Example Usage (Not runnable without root/grub-script-check) ---
