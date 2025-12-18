@@ -49,8 +49,8 @@ from .GrubWriter import GrubWriter
 from .WizValidator import WizValidator
 from .ParamDiscovery import ParamDiscovery
 
-HOME_ST, REVIEW_ST, RESTORE_ST, VIEW_ST, WARN_ST, HELP_ST  = 0, 1, 2, 3, 4, 5
-SCREENS = ('HOME', 'REVIEW', 'RESTORE', 'VIEW', 'WARN', 'HELP') # screen names
+HOME_ST, REVIEW_ST, RESTORE_ST, VIEW_ST, COMPARE_ST, WARN_ST, HELP_ST  = 0, 1, 2, 3, 4, 5, 6
+SCREENS = 'HOME REVIEW RESTORE VIEW COMPARE WARN HELP'.split() # screen names
 
 class Tab:
     """ TBD """
@@ -110,21 +110,26 @@ class ScreenStack:
                     return None
 
         from_screen_num = self.curr.num if self.curr else None
+        new_screen_obj = self.screen_objects.get(screen) if self.screen_objects else None
 
-        # Call leave_screen hook on current screen
+        # Check navigation constraints
+        if not force and new_screen_obj:
+            # Check if screen is terminal (cannot be pushed)
+            if new_screen_obj.is_terminal:
+                return None
+
+            # Check come_from whitelist
+            if new_screen_obj.come_from_whitelist is not None:
+                if from_screen_num not in new_screen_obj.come_from_whitelist:
+                    # Navigation from this screen not allowed
+                    return None
+
+        # Call on_pause() on current screen (it's being covered)
         if not force and self.curr and self.screen_objects:
             current_screen_obj = self.screen_objects.get(from_screen_num)
             if current_screen_obj:
-                if not current_screen_obj.leave_screen(screen):
-                    # Current screen blocked the navigation
-                    return None
-
-        # Call enter_screen hook on new screen
-        if not force and self.screen_objects:
-            new_screen_obj = self.screen_objects.get(screen)
-            if new_screen_obj:
-                if not new_screen_obj.enter_screen(from_screen_num):
-                    # New screen blocked the entry
+                if not current_screen_obj.on_pause():
+                    # Current screen rejected being paused
                     return None
 
         # Navigation approved - proceed
@@ -141,13 +146,15 @@ class ScreenStack:
 
     def pop(self, force=False):
         """
-        Pop the top screen from the stack with validation.
+        Pop the top screen from the stack.
+        on_pop() is always called for cleanup (cannot be rejected).
+        on_resume() is called on the screen being returned to (typically always succeeds).
 
         Args:
             force: Skip validation hooks if True
 
         Returns:
-            Previous position if successful, None if stack is empty or blocked
+            Previous position if successful, None if stack is empty
         """
         if not self.stack:
             return None
@@ -155,20 +162,18 @@ class ScreenStack:
         to_screen_num = self.stack[-1].num
         from_screen_num = self.curr.num if self.curr else None
 
-        # Call leave_screen hook on current screen
+        # Call on_pop() on current screen (it's being removed - always succeeds)
         if not force and self.curr and self.screen_objects:
             current_screen_obj = self.screen_objects.get(from_screen_num)
             if current_screen_obj:
-                if not current_screen_obj.leave_screen(to_screen_num):
-                    # Current screen blocked the navigation
-                    return None
+                current_screen_obj.on_pop()  # Always called, cannot reject
 
-        # Call enter_screen hook on the screen we're returning to
+        # Call on_resume() on the screen we're returning to
         if not force and self.screen_objects:
             prev_screen_obj = self.screen_objects.get(to_screen_num)
             if prev_screen_obj:
-                if not prev_screen_obj.enter_screen(from_screen_num):
-                    # Previous screen blocked the re-entry
+                if not prev_screen_obj.on_resume():
+                    # Previous screen rejected resuming (rare, but allowed)
                     return None
 
         # Navigation approved - proceed
@@ -235,34 +240,48 @@ class Clue:
 
 class Screen:
     """Base class for all screen types"""
+    # Navigation control (class attributes - override in subclasses)
+    come_from_whitelist = None  # None = can come from any screen, else list of screen numbers
+    is_terminal = False         # True = cannot be pushed onto stack
+    cannot_stack_me = False     # True = cannot have other screens pushed on top
+
     def __init__(self, grub_wiz):
+        """
+        Constructor serves as initial entry point for screen.
+        Called once when screen is first created.
+        """
         self.gw = grub_wiz  # Reference to main GrubWiz instance
         self.win = grub_wiz.win
 
     def draw_screen(self):
         """Draw screen-specific lines (header and body)"""
 
-    def enter_screen(self, from_screen):
+    def on_pause(self):
         """
-        Hook called when entering this screen from another screen.
-
-        Args:
-            from_screen: Screen number we're coming from (or None if initial screen)
+        Called when another screen is about to be pushed on top of this one.
 
         Returns:
-            True to allow entry, False to block entry
+            True to allow being paused/covered, False to reject
+        """
+        return not self.cannot_stack_me
+
+    def on_resume(self):
+        """
+        Called when this screen becomes the top screen again
+        (after a screen that was on top of it was popped).
+
+        Returns:
+            True to allow resuming (typically always True)
         """
         return True
 
-    def leave_screen(self, to_screen):
+    def on_pop(self):
         """
-        Hook called when leaving this screen to go to another screen.
-
-        Args:
-            to_screen: Screen number we're going to (or None if exiting app)
+        Called when this screen is being permanently removed from the stack.
+        Must always succeed - use for cleanup only.
 
         Returns:
-            True to allow leaving, False to block leaving
+            Always returns True (cleanup cannot be rejected)
         """
         return True
 
@@ -282,14 +301,7 @@ class Screen:
 
 class HomeScreen(Screen):
     """HOME screen - parameter editing"""
-    def leave_screen(self, to_screen):
-        """
-        Hook called when leaving home screen.
-        Can add validation here if needed (e.g., warn about unsaved changes).
-        """
-        # For now, always allow leaving
-        # Future: could check for unsaved changes and prompt user
-        return True
+    # Home screen has no restrictions - can navigate anywhere
 
     def draw_screen(self):
         """ TBD """
@@ -393,7 +405,8 @@ class HomeScreen(Screen):
         header = f'{title} '
         level = gw.spins.guide
         esc = ' ESC:back' if gw.ss.is_curr(REVIEW_ST) else ''
-        header += f' [g]uide={level} [w]rite [R]estore{esc} ?:help [q]uit'
+        # more = 'm:less-hdr' if gw.spins.verbose_header else '[m]ore-hdr'
+        header += f' [g]uide={level} [w]rite-grub    {esc} ?:help [q]uit'
         header += f'  𝚫={len(gw.get_diffs())}'
         gw.add_fancy_header(header)
         gw.warn_db.write_if_dirty()
@@ -401,8 +414,19 @@ class HomeScreen(Screen):
     def add_common_head2(self, left):
         """ TBD"""
         gw = self.gw
-        tab = self.get_tab()
+        param_name, _, enums, regex, value = gw.get_enums_regex()
         review_screen = gw.ss.is_curr(REVIEW_ST)
+
+        if gw.spins.verbose_header:
+            style = gw.spins.fancy_headers
+            line = '[R]estoreScreen'
+            line += '  [W]arningsScreen' if review_screen else ''
+            line += f'  [f]ancy={style}'
+            if regex:
+                line += '  [E]xpertEdit'
+            gw.add_fancy_header(line)
+
+        tab = self.get_tab()
         picked = gw.win.pick_pos
         if 0 <= picked < len(gw.clues):
             clue = gw.clues[picked]
@@ -412,7 +436,6 @@ class HomeScreen(Screen):
 
         middle =  ''
         if cat == 'param':
-            param_name, _, enums, regex, value = gw.get_enums_regex()
             if enums:
                 middle += '⮜–⮞'
             if regex:
@@ -445,7 +468,7 @@ class HomeScreen(Screen):
         header, cnt = '', gw.hidden_stats.param
         if cnt:
             header = 's:hide' if gw.show_hidden_params else '[s]how'
-            header += f' {cnt} ✘-params'
+            header += f'-{cnt}-inact-params'
         header = f'{header:<{tab.lwid}}'
 
         self.add_common_head2(header)
@@ -516,12 +539,18 @@ class HomeScreen(Screen):
 
 class ReviewScreen(HomeScreen):
     """REVIEW screen - show diffs and warnings"""
-    def enter_screen(self, from_screen):
-        """
-        Hook called when entering review screen.
-        Resets cached data to ensure fresh review.
-        """
-        # Reset cached review data when entering from any screen
+    # Review screen can be accessed from HOME screen
+
+    def __init__(self, grub_wiz):
+        """Constructor handles initial setup"""
+        super().__init__(grub_wiz)
+        # Reset cached review data on construction
+        self.gw.must_reviews = None
+        self.gw.clues = []
+
+    def on_resume(self):
+        """Refresh review data when resuming after being covered"""
+        # Reset cached review data when resuming
         self.gw.must_reviews = None
         self.gw.clues = []
         return True
@@ -669,12 +698,20 @@ class ReviewScreen(HomeScreen):
 
 class RestoreScreen(Screen):
     """RESTORE screen - backup management"""
-    def enter_screen(self, from_screen):
-        """
-        Hook called when entering restore screen.
-        Refreshes backup list to show current state.
-        """
+    # Can be accessed from HOME or REVIEW screens
+    come_from_whitelist = [HOME_ST, REVIEW_ST]
+    baseline_bak = None  # what to compare to
+
+    def __init__(self, grub_wiz):
+        """Constructor handles initial backup list setup"""
+        super().__init__(grub_wiz)
+        # Initialize backup list
         self.gw.do_start_up_backup()
+        self.gw.refresh_backup_list()
+        self.bak_paths = []
+
+    def on_resume(self):
+        """Refresh backup list when resuming"""
         self.gw.refresh_backup_list()
         return True
 
@@ -686,15 +723,58 @@ class RestoreScreen(Screen):
     def add_head(self):
         """ TBD """
         gw = self.gw
-        header = 'RESTORE [d]elete [t]ag [r]estore [v]iew ESC:back ?:help [q]uit'
+        pos, base = self.win.pick_pos, '[c]mp [b]aseline'
+        if 0 <= pos < len(self.bak_paths):
+            if self.bak_paths[pos] == self.baseline_bak:
+                base = ''
+        header = f'RESTORE [r]estore [d]el [t]ag [v]iew {base}    ESC:back ?:help [q]uit'
         gw.add_fancy_header(header)
+
+    def _ensure_reference(self):
+        """ Make sure reference is something valid """
+        gw = self.gw
+        ref, new_ref = self.baseline_bak, None
+        if ref:
+            for pair in gw.ordered_backup_pairs:
+                if pair[1] == ref:
+                    new_ref = ref
+                break
+        if not new_ref and gw.ordered_backup_pairs:
+            new_ref = gw.ordered_backup_pairs[-1][1]
+        RestoreScreen.baseline_bak = new_ref
 
     def add_body(self):
         """ TBD """
         gw = self.gw
+        if not gw.ordered_backup_pairs:
+            return
+        self._ensure_reference()
         for pair in gw.ordered_backup_pairs:
-            prefix = '●' if pair[0] == gw.grub_checksum else ' '
-            self.win.add_body(f'{prefix} {pair[1].name}')
+            checksum, bak_path = pair[0], pair[1]
+            prefix = '●' if checksum == gw.grub_checksum else ' '
+            ref = 'CMP' if self.baseline_bak == bak_path else '   '
+            self.bak_paths.append(bak_path)
+            self.win.add_body(f'{prefix} {ref} {bak_path.name}')
+
+    def baseline_ACTION(self):
+        """Handle 'b' key on RESTORE screen - baseline for CMP"""
+        pos = self.win.pick_pos
+        if 0 <= pos < len(self.bak_paths):
+            RestoreScreen.baseline_bak = self.bak_paths[pos]
+
+    def compare_ACTION(self):
+        """Handle 'c' key on RESTORE screen - set in compare mode"""
+        gw = self.gw
+        idx = self.win.pick_pos
+        if 0 <= idx < len(self.bak_paths):
+            bak_path = self.bak_paths[idx]
+            ref_path = self.baseline_bak
+            if bak_path and ref_path and bak_path != ref_path:
+                if gw.navigate_to(COMPARE_ST):
+                    compare_screen = gw.screens[COMPARE_ST]
+                    compare_screen.bak1 = bak_path
+                    compare_screen.bak2 = ref_path
+
 
     def restore_ACTION(self):
         """Handle 'r' key on RESTORE screen - restore selected backup"""
@@ -705,7 +785,7 @@ class RestoreScreen(Screen):
             gw.backup_mgr.restore_backup(gw.backups[key])
             if gw.navigate_back():
                 assert gw.ss.is_curr(HOME_ST)
-                gw._reinit()
+                gw.reinit_gw()
                 gw.ss = ScreenStack(gw.win, gw.spins, SCREENS, gw.screens)
                 gw.do_start_up_backup()
 
@@ -755,25 +835,118 @@ class RestoreScreen(Screen):
             except Exception as ex:
                 self.win.alert(f'ERR: cannot slurp {gw.bak_path} [{ex}]')
 
-class ViewScreen(Screen):
-    """VIEW screen - view backup contents"""
-    def enter_screen(self, from_screen):
-        """
-        Hook called when entering view screen.
-        Validates that backup data is loaded.
-        """
-        # Ensure we have backup data to display
-        if not self.gw.bak_lines:
-            # No backup loaded - this shouldn't happen, but handle gracefully
-            return False
+class CompareScreen(Screen):
+    """  Show the comparison of two backup files """
+    come_from_whitelist = [RESTORE_ST]
+
+    """COMPARE screen - compared two backups"""
+    def __init__(self, grub_wiz):
+        """Constructor validates backup data is loaded"""
+        super().__init__(grub_wiz)
+        self.bak1 = None # will be a Path
+        self.bak2 = None # will be a Path
+        self.cnt1, self.cnt2 = None, None
+        self.results = None
+
+    def on_pop(self):
+        """Clean up backup view data when screen is removed"""
+        self.results = None
         return True
 
-    def leave_screen(self, to_screen):
-        """
-        Hook called when leaving view screen.
-        Cleans up backup view data.
-        """
-        # Clean up when leaving view screen
+    def draw_screen(self):
+        """ TBD """
+        self.win.set_pick_mode(False)
+        self.add_body()
+        self.add_head()
+
+    def add_body(self):
+        """ TBD """
+        def get_val(param, data):
+            if param not in data:
+                return GrubFile.ABSENT, None
+            return data[param].value, data[param].line_num
+
+        gw = self.gw
+
+        if self.results is None:
+            self.results, lines = [], []
+            grub1 = GrubFile(gw.param_cfg, self.bak1)
+            grub2 = GrubFile(gw.param_cfg, self.bak2)
+            grub1.param_data.update(grub1.extra_params)
+            grub2.param_data.update(grub2.extra_params)
+            data1 = grub1.param_data
+            data2 = grub2.param_data
+            params = sorted(list(set(data1.keys()) | set(data2.keys())))
+            self.cnt1 = len(grub1.lines)
+            self.cnt2 = len(grub2.lines)
+
+            for param in params:
+                value1, num1 = get_val(param, data1)
+                value2, num2 = get_val(param, data2)
+                if value1 == value2:
+                    continue
+                line1 = '' if num1 is None else grub1.lines[num1].strip()
+                line2 = '' if num2 is None else grub2.lines[num2].strip()
+
+                # Add blank separator
+                lines.append('')
+
+                # Add line1 with wrapping
+                prefix1 = '< '
+                content1 = line1
+                lines.append(prefix1 + content1)
+
+                # Add line2 with wrapping
+                prefix2 = '> '
+                content2 = line2
+                lines.append(prefix2 + content2)
+
+            self.results = lines
+
+        # Display with wrapping
+        wid = self.win.cols - 3  # Account for '< ' or '> ' prefix (2 chars) + margin
+        for line in self.results:
+            if not line:
+                self.win.add_body('')
+                continue
+
+            # Check if line starts with a prefix
+            if line.startswith('< ') or line.startswith('> '):
+                prefix = line[:2]
+                content = line[2:]
+
+                # First line with prefix
+                if len(line) <= self.win.cols - 1:
+                    self.win.add_body(line)
+                else:
+                    # Need to wrap
+                    self.win.add_body(prefix + content[:wid])
+                    content = content[wid:]
+
+                    # Continuation lines with indentation
+                    while content:
+                        indent = '  '  # 2 spaces to align with content after prefix
+                        chunk_size = self.win.cols - len(indent) - 1
+                        self.win.add_body(indent + content[:chunk_size])
+                        content = content[chunk_size:]
+            else:
+                self.win.add_body(line)
+
+    def add_head(self):
+        """ TBD """
+        win = self.win
+        win.add_header('COMPARE   ESC:back')
+        win.add_header(f'< {self.bak1.name} [#lines={self.cnt1}]')
+        win.add_header(f'> {self.bak2.name} [#lines={self.cnt2}]')
+
+
+class ViewScreen(Screen):
+    """VIEW screen - view backup contents"""
+    # Can only be accessed from RESTORE screen
+    come_from_whitelist = [RESTORE_ST]
+
+    def on_pop(self):
+        """Clean up backup view data when screen is removed"""
         self.gw.bak_lines = None
         self.gw.bak_path = None
         return True
@@ -803,26 +976,19 @@ class ViewScreen(Screen):
                 line = line[wid:]
 
 class WarnScreen(Screen):
-    """ WARNINGS Screen"""
+    """WARNINGS Screen"""
+    # Can only be accessed from REVIEW screen
+    come_from_whitelist = [REVIEW_ST]
+
     def __init__(self, grub_wiz):
+        """Constructor initializes search state"""
         super().__init__(grub_wiz)
         self.keys = []  # key ('param: text') in each position
         self.search = ''
-        self.regex = None # compiled
+        self.regex = None  # compiled
 
-    def enter_screen(self, from_screen):
-        """
-        Hook called when entering warnings screen.
-        """
-        # self.search = ''
-        # self.regex = None
-        return True
-
-    def leave_screen(self, to_screen):
-        """
-        Hook called when leaving warnings screen.
-        Write any changes before leaving.
-        """
+    def on_pop(self):
+        """Save any changes when screen is removed"""
         # Save any inhibit changes before leaving
         self.gw.warn_db.write_if_dirty()
         return True
@@ -970,9 +1136,9 @@ class GrubWiz:
         self.bak_lines = None # the currently viewed .bak file
         self.bak_path = None
         self.screens = []
-        self._reinit()
+        self.reinit_gw()
 
-    def _reinit(self):
+    def reinit_gw(self):
         """ Call to initialize or re-initialize with new /etc/default/grub """
         self.param_cfg = {}
         self.param_values, self.prev_values = {}, {}
@@ -1030,31 +1196,41 @@ class GrubWiz:
         """TBD """
         spinner = self.spinner = OptionSpinner()
         self.spins = self.spinner.default_obj
+        spinner.add_key('escape', 'ESC - back to prev screen', category="action", keys=[27,])
         spinner.add_key('help_mode', '? - enter help screen', category='action')
-        spinner.add_key('undo', 'u - revert value', category='action')
-        spinner.add_key('cycle_next', 'c,=>,SP - next cycle value',
-                        category='action', keys=[ord('c'), cs.KEY_RIGHT, ord(' ')])
+        spinner.add_key('verbose_header', 'm - more keys shown', vals=[False, True])
+        spinner.add_key('quit', 'q,ctl-c - quit the app', category='action', keys={0x3, ord('q')})
+
+        spinner.add_key('cycle_next', '=>,SP - next cycle value',
+                        category='action', keys=[cs.KEY_RIGHT, ord(' ')])
         spinner.add_key('cycle_prev', '<=,BS - prev cycle value',
                         category='action', keys=[ord('C'), cs.KEY_LEFT, cs.KEY_BACKSPACE])
         spinner.add_key('edit', 'e - edit value', category='action')
         spinner.add_key('expert_edit', 'E - expert edit (minimal validation)', category='action',
                             keys=[ord('E')])
+        spinner.add_key('undo', 'u - revert value', category='action')
+
+        spinner.add_key('hide', 'x - inh/allow warnings', category='action')
+        spinner.add_key('show_hidden', 's - show/hide inactive params', category='action')
+        spinner.add_key('write', 'w - write params and run "grub-update"', category='action')
+        
         spinner.add_key('guide', 'g - guidance level', vals=['Off', 'Enums', "Full"])
-        spinner.add_key('hide', 'x - mark/unmark X-params/warnings', category='action')
-        spinner.add_key('show_hidden', 's - show/hide the X-params/warnings', category='action')
+        spinner.add_key('fancy_headers', 'f - cycle fancy headers (Off/Underline/Reverse)',
+                        vals=['Underline', 'Reverse', 'Off'])
+
+        
         spinner.add_key('enter_restore', 'R - enter restore screen', category='action')
         spinner.add_key('enter_warnings', 'W - enter WARNINGs screen', category='action')
+
         spinner.add_key('restore', 'r - restore selected backup [in restore screen]', category='action')
         spinner.add_key('delete', 'd - delete selected backup [in restore screen]', category='action')
         spinner.add_key('tag', 't - tag/retag a backup file [in restore screen]', category='action')
         spinner.add_key('view', 'v - view a backup file [in restore screen]', category='action')
-        spinner.add_key('write', 'w - write params and run "grub-update"', category='action')
-        spinner.add_key('escape', 'ESC - back to prev screen',
-                        category="action", keys=[27,])
-        spinner.add_key('slash', '/ - filter pattern', category='action')
-        spinner.add_key('quit', 'q,ctl-c - quit the app', category='action', keys={0x3, ord('q')})
-        spinner.add_key('fancy_headers', '_ - cycle fancy headers (Off/Underline/Reverse)',
-                        vals=['Underline', 'Reverse', 'Off'], keys=[ord('_')])
+        spinner.add_key('baseline', 'b - set CMP baseline [in restore screen]', category='action')
+        spinner.add_key('compare', 'c - compare with baseline [in restore screen]', category='action')
+
+        spinner.add_key('slash', '/ - filter pattern [in WARNINGS screen]', category='action')
+
 
 
         win_opts = ConsoleWindowOpts()
@@ -1072,6 +1248,7 @@ class GrubWiz:
             REVIEW_ST: ReviewScreen(self),
             RESTORE_ST: RestoreScreen(self),
             VIEW_ST: ViewScreen(self),
+            COMPARE_ST: CompareScreen(self),
             WARN_ST: WarnScreen(self),
             HELP_ST: HelpScreen(self),
         }
@@ -1410,7 +1587,7 @@ class GrubWiz:
 
         # Single-quoted: everything between quotes is literal
         if value.startswith("'") and value.endswith("'") and len(value) >= 2:
-            return True
+            return "'" not in value[1:-1]  # Disallow single quotes inside
 
         # Double-quoted: check for balanced quotes
         if value.startswith('"') and value.endswith('"') and len(value) >= 2:
@@ -1420,15 +1597,10 @@ class GrubWiz:
             check = inner.replace('\\"', '')
             return '"' not in check
 
-        # Unquoted word: no spaces or special shell chars
-        if ' ' in value or '\t' in value or '\n' in value:
-            return False
-        # Disallow dangerous shell chars in unquoted strings
-        dangerous = set(';&|<>(){}[]$`\\!')
-        if any(c in value for c in dangerous):
-            return False
+        # Unquoted word: only allow alphanumeric, underscore, hyphen, period
+        # Anything fancier (paths, spaces, special chars) must be quoted
+        return bool(re.match(r'^[\w.-]+$', value))
 
-        return True
 
     def refresh_backup_list(self):
         """ TBD """
@@ -1500,7 +1672,7 @@ class GrubWiz:
                 print(install_rv[1])
                 ok = False
         if ok:
-            os.system('clear ; echo "OK ... newly installed" ;  cat /etc/default/grub')
+            os.system('clear ; echo "OK ... newly installed"')
             print('\n\nUpdate successful! Choose:')
             print('  [r]eboot now')
             print('  [p]oweroff')
@@ -1522,7 +1694,7 @@ class GrubWiz:
 
         self.win.start_curses()
         if ok:
-            self._reinit()
+            self.reinit_gw()
             self.ss = ScreenStack(self.win, self.spins, SCREENS, self.screens)
             self.do_start_up_backup()
 
@@ -1639,7 +1811,7 @@ class GrubWiz:
                 screen_actions = [
                     'cycle_next', 'cycle_prev', 'undo', 'show_hidden', 'edit',
                     'expert_edit', 'hide', 'write', 'restore', 'delete', 'tag',
-                    'view', 'slash'
+                    'view', 'slash', 'baseline', 'compare',
                 ]
                 current_screen = self.screens[self.ss.curr.num]
                 for action in screen_actions:

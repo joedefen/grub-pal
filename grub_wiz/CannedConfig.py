@@ -16,7 +16,6 @@ class CannedConfig:
         'edit_re': EXPERT_EDIT,
         'enums': {},  # key: enum name, value enum description
         'guidance': '',  # often lengthy, may have embedded newlines
-        'hide': False,  # deprecated
     }
     def __init__(self):
         # 1. Get a Traversable object for the 'grub_wiz' package directory
@@ -26,6 +25,48 @@ class CannedConfig:
         # We use resource_path.read_text() to get the content as a string
         yaml_string = resource_path.read_text()
         self.data = yaml.load(yaml_string)
+    # In CannedConfig.__init__()
+
+    def PROPOSED__init__(self):
+        # 1. Load packaged canned_config
+        resource_path = files('grub_wiz') / 'canned_config.yaml'
+        self.data = yaml.load(resource_path.read_text())
+        
+        # 2. Dump reference copy to config dir
+        ref_path = user_config_dir / 'canned_config.yaml.REFERENCE'
+        if not ref_path.exists() or needs_update(ref_path):
+            ref_path.write_text(resource_path.read_text())
+        
+        # 3. Try to load user's custom config
+        custom_path = user_config_dir / 'custom_config.yaml'
+        if custom_path.exists():
+            try:
+                custom_data = yaml.load(custom_path.read_text())
+                if self.validate_schema(custom_data):
+                    self.data = custom_data  # Or merge if you prefer
+                else:
+                    print(f"WARNING: {custom_path} failed validation, using packaged config")
+            except Exception as e:
+                print(f"WARNING: Cannot load {custom_path}: {e}")
+
+        def PROPOSED_validate_schema(self, data):
+            """Validate custom config has correct structure"""
+            if not isinstance(data, dict):
+                return False
+            
+            for section_name, params in data.items():
+                if not isinstance(params, dict):
+                    return False
+                for param_name, cfg in params.items():
+                    # Check required fields exist
+                    if not all(k in cfg for k in ('default', 'edit_re', 'enums', 'guidance')):
+                        return False
+                    # Check no extra fields (strict)
+                    if set(cfg.keys()) - set(self.default_cfg.keys()):
+                        return False
+            return True
+
+
 
     def dump(self):
       """ Dump the wired/initial configuration"""

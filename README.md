@@ -126,13 +126,39 @@ When you enter the restore screen by typing `R` from the EDIT or REVIEW screen, 
  - the `[R]estore` menu item brings up the RESTORE screen which lists backups; you can delete, restore, and view backups
  - if a backup is restored, `grub-wiz` re-initializes using restored grub file and returns to main screen
 
-#### Parameter Discovery
+#### Parameter Discovery and Excluded Parameters
 Because GRUB can vary per system, `grub-wiz` uses `info -f grub -n "Simple Configuration"` to discover which parameters are actually supported. Parameters not found on your system are automatically removed by `grub-wiz` from its screens. Notes:
 - We recommend installing GRUB documentation for best results:
     - Ubuntu/Debian: `sudo apt install grub-doc`
     - Fedora/RHEL: `sudo dnf install grub2-common`
 - If `info` provides inaccurate results, you can disable discovery:
     - `grub-wiz --discovery=disable` (use "enable" or "show" for other actions)
+
+
+`grub-wiz` focuses on common configuration tasks. You may have specialized needs such as:
+
+- **Xen virtualization**: GRUB_CMDLINE_XEN, GRUB_CMDLINE_XEN_DEFAULT
+- **Debug output**: GRUB_ENABLE_BLSCFG, GRUB_DEBUG
+- **Early initrd**: GRUB_EARLY_INITRD_LINUX*
+
+If so, add these manually to /etc/default/grub - grub-wiz will recognize and preserve them (but with limited validation and no cross-checks).
+
+#### Custom Parameter Configuration (Advanced)
+
+**TODO**
+
+For advanced users who need to modify parameter definitions:
+
+1. grub-wiz creates `~/.config/grub-wiz/canned_config.yaml` as a template
+2. Copy it to `~/.config/grub-wiz/custom_config.yaml`
+3. Edit as needed (add params, modify validation regex, change guidance, etc.)
+4. Restart `grub-wiz` - it will use your custom config if valid
+
+**Notes:**
+- Invalid YAML or schema errors fall back to packaged config with a warning
+- Use `grub-wiz --validate-custom-config` to test your changes
+- Consider submitting useful additions as GitHub issues/PRs!
+
 
 ## Appendix: Additional Details
 
