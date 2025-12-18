@@ -162,6 +162,98 @@ For advanced users who need to modify parameter definitions:
 
 ## Appendix: Additional Details
 
+#### GRUB File Parsing and Rewriting Rules
+
+When `grub-wiz` reads and writes `/etc/default/grub`, it follows specific rules to ensure compatibility and safety. Understanding these rules helps you avoid patterns that could cause issues.
+
+##### ✅ Supported Patterns
+
+**Standard Parameter Assignments**
+```bash
+GRUB_TIMEOUT=5
+GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"
+GRUB_DEFAULT=0
+```
+These are read, managed, and written back correctly.
+
+**Backslash Continuation Lines**
+```bash
+GRUB_CMDLINE_LINUX_DEFAULT="quiet splash \
+nvidia-drm.modeset=1 \
+acpi_backlight=vendor \
+intel_pstate=disable"
+```
+- Continuation lines are automatically joined during reading
+- Written back as a single line: `GRUB_CMDLINE_LINUX_DEFAULT="quiet splash nvidia-drm.modeset=1 acpi_backlight=vendor intel_pstate=disable"`
+- **Requirements**:
+  - Value must be double-quoted (not single quotes or unquoted)
+  - Each line except the last must end with `\` immediately before the newline
+  - Works with both commented and uncommented parameters
+
+**Commented Parameters**
+```bash
+# This parameter is disabled
+#GRUB_DISABLE_RECOVERY=true
+```
+- Tracked with special internal value (shown as `∎` in param data)
+- Can be uncommented and given a value through the UI
+- Commented continuations are also supported (each line must start with `#`)
+
+##### ⛔ Blacklisted Patterns (Passthrough Only)
+
+`grub-wiz` detects but **does not manage** parameters using shell variable expansion. These patterns require shell interpretation and are preserved exactly as written but excluded from the UI:
+
+**Variable Self-Reference**
+```bash
+GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"
+GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT} extra_option"
+```
+- **Both lines** are blacklisted and passed through unchanged
+- The parameter `GRUB_CMDLINE_LINUX_DEFAULT` will not appear in the UI
+
+**Variable Cross-Reference**
+```bash
+GRUB_TIMEOUT=5
+GRUB_FOO="timeout is $GRUB_TIMEOUT seconds"
+```
+- Only `GRUB_FOO` is blacklisted (uses expansion, can't predict final value)
+- `GRUB_TIMEOUT` remains editable in the UI
+- Changes to `GRUB_TIMEOUT` through `grub-wiz` will be picked up by `GRUB_FOO` when the file is sourced
+- `GRUB_FOO` is written back exactly as found
+
+**Why Blacklist Variable Expansion?**
+- Parameters using `$VAR` or `${VAR}` require shell evaluation at runtime
+- `grub-wiz` cannot reliably predict or validate their final expanded values
+- Attempting to manage these could corrupt complex scripting logic
+- Referenced parameters (like `GRUB_TIMEOUT` above) remain fully editable - changes propagate when the file is sourced by GRUB
+
+##### 📝 Best Practices for Manual Editing
+
+**DO:**
+- ✅ Use double quotes for values with spaces or special characters
+- ✅ Use continuation lines (with `\`) for very long parameter values
+- ✅ Add comments above parameters for documentation
+- ✅ Keep it simple - one assignment per parameter
+
+**DON'T:**
+- ❌ Use variable expansion (`$VAR` or `${VAR}`) if you want `grub-wiz` to manage the parameter
+- ❌ Mix quoted and unquoted values in continuation lines
+- ❌ Put `#` comments in the middle of continuation sequences
+- ❌ Use single quotes with backslash continuations (shell doesn't expand `\` in single quotes)
+
+##### 🔍 How to Check if a Parameter is Blacklisted
+
+If a parameter you expect to see doesn't appear in `grub-wiz`:
+1. Check `/etc/default/grub` for variable expansion (`$` or `${...}`)
+2. Simplify to a direct assignment: `GRUB_PARAM="value"` instead of `GRUB_PARAM="${OTHER} value"`
+3. Restart `grub-wiz` - the parameter should now appear
+
+##### 📌 Parameter Discovery
+
+Parameters that don't exist on your system (per `info grub`) are also excluded from the UI but preserved in the file. See **Parameter Discovery and Excluded Parameters** section for details.
+
+---
+
 #### Running grub-wiz at recovery time
 
 To leverage user-installed, `grub-wiz` even in minimal recovery environment of grub recovery mode:

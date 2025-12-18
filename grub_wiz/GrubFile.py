@@ -58,6 +58,8 @@ class GrubFile:
         self.param_data: Dict[str, Dict[str, Any]] = {}
         # Unvalidated params discovered in grub file
         self.extra_params: Dict[str, Dict[str, Any]] = {}
+        # Params using variable expansion - don't manage these
+        self.blacklisted_params: set = set()
         self.discovery = ParamDiscovery.get_singleton()
 
         self.read_file()
@@ -123,19 +125,136 @@ class GrubFile:
 
         return '\n'.join(guidance_lines)
 
+    def _join_continuation_lines(self):
+        """
+        Pass 1a: Join backslash continuation lines physically in self.lines.
+        Pattern: PARAM="value \
+                 continued"
+
+        Modifies self.lines in place, replacing continuation sequences with single lines.
+        Works for both commented and uncommented lines.
+        """
+        i = 0
+        while i < len(self.lines):
+            line = self.lines[i]
+            stripped = line.rstrip()
+
+            # Check if line ends with backslash (potential continuation)
+            if not stripped.endswith('\\'):
+                i += 1
+                continue
+
+            # Check if it's a parameter assignment with quoted value and backslash continuation
+            # Pattern: [#]GRUB_XXX="...text \
+            # Look for = followed by " anywhere in the line
+            if '=' not in line or '"' not in line:
+                i += 1
+                continue
+
+            # Extract the part after the first = sign
+            try:
+                equals_parts = line.split('=', 1)
+                if len(equals_parts) < 2:
+                    i += 1
+                    continue
+                value_part = equals_parts[1].rstrip()
+                # Check if value starts with " and ends with \
+                if not (value_part.startswith('"') and value_part.endswith('\\')):
+                    i += 1
+                    continue
+            except:
+                i += 1
+                continue
+
+            # Collect continuation lines
+            combined = stripped
+            lines_consumed = 0
+
+            # Check if the first line is commented
+            is_commented = stripped.lstrip().startswith('#')
+
+            while combined.endswith('\\') and (i + lines_consumed + 1) < len(self.lines):
+                next_line = self.lines[i + lines_consumed + 1].rstrip()
+                next_stripped = next_line.strip()
+
+                # For commented continuations, expect # at start of continuation
+                # For uncommented continuations, # at start means malformed
+                if is_commented:
+                    # Continuation line should also be commented
+                    if not next_stripped.startswith('#'):
+                        break
+                    # Strip the leading # from the continuation line
+                    next_line = next_line.lstrip()
+                    if next_line.startswith('#'):
+                        next_line = next_line[1:]
+                else:
+                    # Uncommented continuation shouldn't start with #
+                    if next_stripped.startswith('#'):
+                        break
+
+                # Remove backslash and append next line
+                combined = combined[:-1] + next_line.rstrip()
+                lines_consumed += 1
+
+            # Replace the first line with combined value
+            self.lines[i] = combined + '\n'
+
+            # Remove the consumed continuation lines
+            if lines_consumed > 0:
+                del self.lines[i + 1:i + 1 + lines_consumed]
+
+            i += 1
+
+    def _scan_for_variable_expansion(self):
+        """
+        Pass 1b: Scan for uncommented lines using variable expansion.
+        Blacklist the left-side PARAM (which uses expansion).
+        Right-side referenced params remain editable - changes will be picked up when sourced.
+        Pattern: PARAM=...${GRUB_...} or PARAM=...$GRUB_...
+        """
+        for line in self.lines:
+            stripped = line.strip()
+
+            # Skip comments and empty lines
+            if not stripped or stripped.startswith('#'):
+                continue
+
+            # Match PARAM=value pattern
+            mat = re.match(r"\s*(GRUB(_[A-Z]+)+)\s*=(.*)$", stripped)
+            if not mat:
+                continue
+
+            left_param = mat.group(1)
+            value_part = mat.group(3)
+
+            # Check if value contains $GRUB_ or ${GRUB_...}
+            if '$GRUB_' in value_part or '${GRUB_' in value_part:
+                # Blacklist only the left-side parameter (the one using expansion)
+                # Right-side params remain editable and changes propagate when sourced
+                self.blacklisted_params.add(left_param)
+
     def read_file(self):
         """Reads the GRUB file and populates the internal data structures."""
         try:
             with open(self.file_path, 'r', encoding='utf-8') as f:
                 self.lines = f.readlines()
-                self.param_of = [None] * len(self.lines)
-                self._initialize_param_data()
 
         except FileNotFoundError:
             print(f"Warning: File not found at {self.file_path}. Starting with empty configuration.")
             self.lines = []
             return
 
+        # Pass 1a: Join backslash continuation lines (modifies self.lines)
+        self._join_continuation_lines()
+
+        # Now initialize structures based on the modified line count
+        self.param_of = [None] * len(self.lines)
+        self._initialize_param_data()
+
+        # Pass 1b: Scan for variable expansion and build blacklist
+        self._scan_for_variable_expansion()
+
+        # Pass 2: Parse parameters (continuation lines already joined)
         for i, line in enumerate(self.lines):
             line = line.strip()
 
@@ -149,6 +268,10 @@ class GrubFile:
             param = mat.group(2)
             is_comment = bool(mat.group(1))
             value_part = mat.group(4)
+
+            # Skip blacklisted params (using variable expansion) - passthrough only
+            if param in self.blacklisted_params:
+                continue
 
             if param not in self.supported_params:
                 if self.discovery.get_absent([param]):
@@ -221,6 +344,12 @@ class GrubFile:
             if not param:
                 new_lines.append((' ', line))  # unsupported param or any non-param line
                 continue
+
+            # Blacklisted params passthrough (not in param_data)
+            if param not in self.param_data:
+                new_lines.append((' ', line))
+                continue
+
             data = self.param_data[param]
             new_value = data.new_value
             if new_value is None:
