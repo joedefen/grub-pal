@@ -451,7 +451,12 @@ class HomeScreen(Screen):
     def add_common_head1(self, title):
         """ TBD"""
         gw = self.gw
-        header = f'{title} '
+        header = ''
+        # Add timestamp when verbose headers enabled (helps verify refresh rate)
+        if gw.spins.verbose_header:
+            timestamp = time.strftime('%H:%M:%S')
+            header = f'{timestamp} '
+        header += f'{title} '
         level = gw.spins.guide
         esc = ' ESC:back' if gw.ss.is_curr(REVIEW_ST) else ''
         # more = 'm:less-hdr' if gw.spins.verbose_header else '[m]ore-hdr'
@@ -1470,8 +1475,11 @@ class GrubWiz:
             group_cnt = self.clues[pos].group_cnt
         over = pos - win.scroll_pos + group_cnt - win.scroll_view_size
         if over >= 0:
+            old_scroll_pos = win.scroll_pos
             win.scroll_pos += over + 1 # scroll back by number of out-of-view lines
-            self.next_prompt_seconds = [0.1, 0.1]
+            # Only reset refresh timer if we actually scrolled
+            if win.scroll_pos != old_scroll_pos:
+                self.next_prompt_seconds = [0.1, 0.1]
 
 
     def adjust_picked_pos_w_clues(self):
@@ -1797,6 +1805,14 @@ class GrubWiz:
 
         Returns ns (.idx, .next_idx, .next_value, .prev_idx, .prev_value)
         """
+        def normalize_value(val):
+            """Remove outer quotes for comparison"""
+            s = str(val)
+            # Strip outer quotes (both single and double)
+            if len(s) >= 2 and s[0] in ('"', "'") and s[-1] == s[0]:
+                return s[1:-1]
+            return s
+
         choices = None
         if cfg:
             enums = cfg.get(enums, [])
@@ -1804,9 +1820,12 @@ class GrubWiz:
             choices = list(enums.keys())
         assert choices
 
+        # Normalize the value for comparison (strip quotes)
+        norm_value = normalize_value(value)
+
         idx = -1 # default to before first
         for ii, choice in enumerate(choices):
-            if str(value) == str(choice):
+            if norm_value == normalize_value(choice):
                 idx = ii
                 break
         next_idx = (idx+1) % len(choices)

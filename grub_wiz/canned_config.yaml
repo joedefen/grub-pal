@@ -111,7 +111,7 @@ Menu Entries:
 Kernel Arguments:
   GRUB_CMDLINE_LINUX:
     default: '""'
-    edit_re: ^".*"$
+    edit_re: ^(".*"|'.*'|)$
     enums: {}
     guidance: "Kernel arguments for ALL normal/recovery boots.
       \n: Typical uses: video options, disabling specific drivers, or custom parameters.
@@ -119,7 +119,7 @@ Kernel Arguments:
 
   GRUB_CMDLINE_LINUX_DEFAULT:
     default: '"quiet splash"'
-    edit_re: ^".*"$
+    edit_re: ^(".*"|'.*'|)$
     enums:
       '"quiet splash"': Default Ubuntu/Debian setting (hides boot messages)
       '"text"': Force text mode display early in boot process
@@ -130,11 +130,25 @@ Kernel Arguments:
 
   GRUB_CMDLINE_LINUX_RECOVERY:
     default: ''
-    edit_re: ^(".*")?$
+    edit_re: ^(".*"|'.*'|)$
     enums: {}
     guidance: "Kernel arguments specifically for recovery mode boots.
       \n: If empty, uses GRUB_CMDLINE_LINUX.
       \n: Use to override recovery mode behavior."
+
+  GRUB_EARLY_INITRD_LINUX_STOCK:
+    default: ''
+    edit_re: ^([\w\-./]+\.img(\s+[\w\-./]+\.img)*)?$
+    enums:
+      '': No early initrd (microcode updates disabled)
+      'intel-ucode.img': Intel CPU microcode updates (Arch/Fedora)
+      'amd-ucode.img': AMD CPU microcode updates (Arch/Fedora)
+      'intel-ucode.img amd-ucode.img': Both Intel and AMD microcode
+    guidance: "Early microcode initrd images loaded before main initrd.
+      \n: Used primarily for CPU microcode updates on Arch, Fedora, and similar distros.
+      \n: These are loaded very early in boot for security/stability fixes.
+      \n: Space-separated list of .img files (relative to /boot).
+      \n%ENUMS%"
 
 Visual Appearance:
   GRUB_DISTRIBUTOR:
@@ -147,7 +161,7 @@ Visual Appearance:
 
   GRUB_BACKGROUND:
     default: ''
-    edit_re: (?i)^(/.*\.(png|jpg|jpeg|tga|bmp))?$
+    edit_re: (?i)^(.*\.(png|jpg|jpeg|tga|bmp))?$
     enums: {}
     guidance: "Full path and filename to a background image.
       \n: Must be a JPEG or PNG file path.
@@ -156,7 +170,7 @@ Visual Appearance:
 
   GRUB_THEME:
     default: ''
-    edit_re: (?i)^(/.*theme\.txt)?$
+    edit_re: (?i)^(.*theme\.txt)?$
     enums: {}
     guidance: "Path to the theme.txt file for a custom GRUB theme.
       \n: This overrides the background image setting (GRUB_BACKGROUND)."

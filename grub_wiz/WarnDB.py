@@ -22,14 +22,14 @@ class WarnDB:
     are suppressed (inhibited).
     """
 
-    def __init__(self, param_cfg, filename: str = 'hidden-items.yaml'):
+    def __init__(self, param_cfg, filename: str = 'warn-db.yaml'):
         """
         Initializes the class, creates the config directory if necessary,
         and performs the initial read/refresh.
 
         Args:
             user_config: UserConfigDir instance (uses singleton if not provided)
-            filename: Name of the YAML file to store hidden items
+            filename: Name of the YAML file to store warning database
         """
         self.user_config = UserConfigDir.get_singleton("grub-wiz")
         self.config_dir: Path = self.user_config.config_dir
@@ -48,11 +48,16 @@ class WarnDB:
 
     def refresh(self):
         """
-            Reads the hidden items from the YAML file,
-            clearing the current state on failure.
+            Reads the warning database from the YAML file.
+            If file doesn't exist, starts with empty state (normal on first run).
         """
         self.last_read_time = None
         self.dirty_count = 0 # Assume file state is clean
+
+        # File not existing is normal on first run - start fresh
+        if not self.yaml_path.exists():
+            self.inhibits.clear()
+            return True
 
         try:
             with self.yaml_path.open('r') as f:
@@ -66,8 +71,8 @@ class WarnDB:
             return True
 
         except (IOError, YAMLError) as e:
-            # Any failure leads to empty sets, allowing the application to continue.
-            print(f"Warning: Failed to read hidden-items.yaml: {e}")
+            # Only warn on actual errors (not missing file)
+            print(f"Warning: Failed to read {self.yaml_path.name}: {e}")
             self.inhibits.clear()
             return True
 
@@ -94,7 +99,7 @@ class WarnDB:
             return True
 
         except OSError as e:
-            print(f"Error writing or setting permissions on hidden-items.yaml: {e}")
+            print(f"Error writing or setting permissions on {self.yaml_path.name}: {e}")
             return False
 
     def inhibit(self, composite_id: str, hide: bool):
