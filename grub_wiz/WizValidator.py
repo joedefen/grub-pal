@@ -240,7 +240,7 @@ class WizValidator:
         warns, all_warn_info = {}, {}
         layout = self.probe_disk_layout()
 
-        # if _DEFAULT is saved, then _SAVEDEFAULT must be true
+        # if _DEFAULT is saved, then _SAVEDEFAULT cannot be false
         p1, v1, p2, v2 = getvals('GRUB_DEFAULT', 'GRUB_SAVEDEFAULT')
         bad = p1 and avi(v1) in quotes('saved') and avi(v2) in quotes('false')
         hey_if(bad, p1, 4, f'when "saved", {sh(p2)} cannot be "false"')

@@ -1,36 +1,32 @@
->  **Note: This is version 0.x.y - please report issues at https://github.com/joedefen/grub-wiz/issues**
+>  **Note: This is version 0.8.y - please report issues at https://github.com/joedefen/grub-wiz/issues**
 
-## GrubWiz: The Helpful GRUB Bootloader Assistant
+## GrubWiz: Safe GRUB Configuration Made Simple
 
-GrubWiz is a safe, simple, and reliable Text User Interface (TUI) utility for managing the most common GRUB bootloader configuration tasks on Linux systems.
+`grub-wiz` is a terminal-based editor that helps you manage /etc/default/grub safely and efficiently, replacing error-prone manual editing with guided configuration.
 
-#### Why Use GrubWiz?
+**The Problem It Solves.** Editing GRUB configurations manually is risky—typos can break your bootloader, and GUI tools often make overly aggressive changes. `grub-wiz` provides a middle ground: the power of direct editing with the safety of validation and guidance.
 
-Dealing with `/etc/default/grub` and running `update-grub` manually is tedious and prone to typos. Other visual configurators often make overly aggressive changes that break the boot process.
+* **Safety by Design**
+  -   Parameter validation via regex and cross-checks
+  -   Safe defaults and guided choices for common settings
+  -   Backups offered when configuration is unique
 
-GrubWiz solves this by focusing on core functionality and system safety:
-  * ✅ Safety First: Always creates a timestamped backup of your current GRUB configuration before applying any changes.
-  * 💻 Curses Interface: Lightning-fast, lightweight TUI works across all environments (local, SSH, minimal installs) without requiring a desktop environment.
-  * ⚙️ Targeted Configuration: Focuses on the most essential and common configuration tasks, minimizing risk.
+* **Key Features**
+  -   *Smart editing*: Preset choices for common values, regex validation for free-form entries
+  -   *Context-aware warnings*: Cross-parameter validation and sensible defaults
+  -   *Full backup system*: Tagged, timestamped backups with easy restore and comparison
+  -   *Lightweight TUI*: Works everywhere—local, SSH, or minimal environments
+  -   *Respects existing config*: Unknown parameters are preserved with minimal validation
 
-#### Core Features
+* **How It Works**
+  -   Edit with guidance: Choose from presets or edit with validation
+  -   Review with checks: See warnings and fix issues before writing
+  -   Write safely: validation → update-grub → backup
+  -   Restore if needed: version history with diff comparison
 
-GrubWiz makes complex, manual configuration steps as easy as a few keystrokes in a clean interface:
-* **Safer editing:**
-  * GrubWiz offers assisted editing for the most commonly used parameters.
-  * For parameters with a fix set values or typical values, you can select from the choices preventing typos.
-  * When you need to edit parameters, they are checked against a "regex" for validity preventing very wrong entries
-  * In its "review" screen, cross-parameter and sensibility checks are done and issues are presented with a chance to fix them immediately.
+`grub-wiz` focuses on the 95% of common GRUB configuration tasks, making them safe and simple while preserving your existing customizations.
 
-* **Handles "Unknown" Parameters**
-  * Unsupported parameters in `/etc/default/grub` are combined with supported parameters, but the validation is minimal.
-  * Before committing, `grub-script-check` is run to catch syntax errors on the combination grub file.
-
-* **Backup / Restore**
-  * When loading and before saving, if the contents is different that other saved backups, you are prompted to name a new backup.
-  * In the restore screen, you can restore backups, delete backups, retag backups, view backup contents, can compare the parameter values for diffences in two backup files.
-
-#### Installation and Running
+#### Installation and Running is Easy
 
 * `grub-wiz` is available on PyPI and installed via: `pipx install grub-wiz`
 * Typically, just run `grub-wiz` w/o arguments
@@ -44,7 +40,7 @@ GrubWiz makes complex, manual configuration steps as easy as a few keystrokes in
 Running `grub-wiz` brings a screen similar to:
 ```
  EDIT  [g]uide=Off [w]rite-grub     ?:help [q]uit  𝚫=0
- [s]how-all-params(22-inact)  ⮜–⮞ [e]dit x:comment-out
+ [s]how-all-params(22-inact)  ⮜–⮞ [e]dit x:deact
 ─────────────────────────────────────────────────────────────────────────────────────────────
  [Boot Timeout]
 >  TIMEOUT·················  5                                                               

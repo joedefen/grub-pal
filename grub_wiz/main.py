@@ -298,11 +298,37 @@ class Screen:
             method()
             return True
         return False
+    
+    def slash_PROMPT(self, current: str):
+        """ TBD """
+        hint = 'must be a valid python regex'
+        regex = None # compiled
+        pattern = current
+
+        while True:
+            prompt = f'Enter search pattern [{hint}]'
+            pattern = self.win.answer(prompt=prompt,
+                                  seed=str(pattern), height=1)
+            if pattern is None: # aborted
+                return
+
+            if not pattern:
+                return '', None
+            try:
+                regex = re.compile(pattern, re.IGNORECASE)
+                return regex, pattern
+            except Exception as whynot:
+                hint = str(whynot)
+                continue
 
 
 class HomeScreen(Screen):
     """HOME screen - parameter editing"""
     # Home screen has no restrictions - can navigate anywhere
+    def __init__(self, gw):
+        super().__init__(gw)
+        self.search = ''
+        self.regex = None
 
     def draw_screen(self):
         """ TBD """
@@ -315,7 +341,7 @@ class HomeScreen(Screen):
         gw = self.gw
         tab = self.get_tab()
         marker = ' '
-        if gw.ss.is_curr(HOME_ST) and not gw.is_active_param(param_name):
+        if not gw.is_active_param(param_name):
             marker = '✘'
         value = gw.param_values[param_name]
         line = f'{marker} {param_name[5:]:·<{tab.lwid-2}}'
@@ -367,12 +393,17 @@ class HomeScreen(Screen):
                     gw.hidden_stats.param += 1
 
                 # Determine visibility for rendering
-                if gw.show_hidden_params or gw.is_active_param(param_name):
+                if not gw.show_hidden_params and not gw.is_active_param(param_name):
+                    continue
+                if gw.show_hidden_params and self.regex:
+                    if self.regex.search(param_name[5:]):
+                        visible_params.append(param_name)
+                else:
                     visible_params.append(param_name)
 
 
             # Skip empty sections when in compact mode (hiding params)
-            if not visible_params and not gw.show_hidden_params:
+            if not visible_params: # and not gw.show_hidden_params:
                 continue
 
             # Add blank line before sections (except first visible section)
@@ -424,7 +455,7 @@ class HomeScreen(Screen):
         level = gw.spins.guide
         esc = ' ESC:back' if gw.ss.is_curr(REVIEW_ST) else ''
         # more = 'm:less-hdr' if gw.spins.verbose_header else '[m]ore-hdr'
-        header += f' [g]uide={level} [w]rite-grub    {esc} ?:help [q]uit'
+        header += f' [g]uide={level}  [w]rite-grub   {esc} ?:help [q]uit'
         header += f'  𝚫={len(gw.get_diffs())}'
         gw.add_fancy_header(header)
         gw.warn_db.write_if_dirty()
@@ -458,10 +489,9 @@ class HomeScreen(Screen):
                 middle += '⮜–⮞'
             if regex:
                 middle += ' [e]dit'
-            if not review_screen and param_name:
-                middle += (' x:comment-out' if gw.is_active_param(
-                            param_name) else ' x:uncomment' if value == GrubFile.COMMENT
-                            else ' x:create')
+            if param_name:
+                if gw.is_active_param( param_name):
+                    middle += ' x:deact'
             if review_screen and param_name:
                 if str(value) != str(gw.prev_values[param_name]):
                     middle += ' [u]ndo'
@@ -469,6 +499,10 @@ class HomeScreen(Screen):
         if cat == 'warn' and review_screen:
             middle += ' x:allow' if gw.warn_db.is_inhibit(
                         ident) else ' x:inh'
+
+        if not review_screen and gw.show_hidden_params:
+            middle = f'{middle:<15}' ## so search does not move too much
+            middle += f'  /{self.search}'
 
         gw.add_fancy_header(f'{left:<{tab.lwid}}  {middle}')
 
@@ -546,16 +580,11 @@ class HomeScreen(Screen):
         if gw.navigate_to(REVIEW_ST):
             gw.must_reviews = None  # reset
             gw.clues = []
-
-    def delete_ACTION(self):
-        """Handle 'd' key on HOME/REVIEW screen - set param to '##'"""
-        gw = self.gw
-        name, _, _, _, _ = gw.get_enums_regex()
-        if name:
-            value = gw.param_values[name]
-            if value != '<>':
-                gw.param_values[name] = '##'
-
+    
+    def slash_ACTION(self):
+        """ TBD"""
+        if self.gw.show_hidden_params:
+            self.regex, self.search = self.slash_PROMPT(self.search)
 
 class ReviewScreen(HomeScreen):
     """REVIEW screen - show diffs and warnings"""
@@ -671,10 +700,11 @@ class ReviewScreen(HomeScreen):
                 warn_key = f'{param_name} {hey[1]}'
                 is_inhibit = gw.warn_db.is_inhibit(warn_key)
                 gw.hidden_stats.warn += int(is_inhibit)
+                stars = '🟌' * len(hey[0])
 
                 if not is_inhibit or gw.show_hidden_warns:
                     mark = '✘' if is_inhibit else ' '
-                    sub_text = f'└─── {mark} {hey[0]:>4}'
+                    sub_text = f'└─── {mark} {stars:>4}'
                     line = f'{sub_text:>{tab.lwid}}  {hey[1]}'
                     cnt = gw.add_wrapped_body_line(line,
                                         tab.lwid+2, pos==picked)
@@ -700,6 +730,8 @@ class ReviewScreen(HomeScreen):
                 opposite = not gw.warn_db.is_inhibit(clue.ident)
                 gw.warn_db.inhibit(clue.ident, opposite)
                 gw.warn_db.write_if_dirty()
+            elif clue.cat == 'param':
+                gw.deactivate_param(clue.ident)
 
     def undo_ACTION(self):
         """Handle 'u' key on REVIEW screen - undo parameter change"""
@@ -716,6 +748,10 @@ class ReviewScreen(HomeScreen):
     def write_ACTION(self):
         """Handle 'w' key on REVIEW screen - update grub"""
         self.gw.update_grub()
+
+    def slash_ACTION(self):
+        """ TBD"""
+        return # does nothing here
 
 
 class RestoreScreen(Screen):
@@ -1048,6 +1084,8 @@ class WarnScreen(Screen):
 
         for key in keys:
             sev = all_info[key]
+            stars = '🟍' * sev
+
             inh = 'X' if db.is_inhibit(key) else ' '
 
             # Split key into param_name and message
@@ -1055,20 +1093,20 @@ class WarnScreen(Screen):
                 param_name, message = key.split(': ', 1)
                 # Strip GRUB_ prefix
                 display_param = param_name.replace('GRUB_', '', 1)
-
+                
                 # Create full line for searching (always has param name)
-                full_line = f'[{inh}] {"*"*sev:>4} {display_param}: {message}'
+                full_line = f'[{inh}] {stars:>4} {display_param}: {message}'
 
                 # Check if same param as previous DISPLAYED line
                 if param_name == prev_param:
                     # Omit param name, just show message with proper spacing
-                    line = f'[{inh}] {"*"*sev:>4} {" " * (len(display_param) + 2)}{message}'
+                    line = f'[{inh}] {stars:>4} {" " * (len(display_param) + 2)}{message}'
                 else:
                     # Show full line with param name
                     line = full_line
             else:
                 # No colon in key, show as-is
-                full_line = line = f'[{inh}] {"*"*sev:>4} {key}'
+                full_line = line = f'[{inh}] {stars:>4} {key}'
                 param_name = None
 
             # Search against full_line, but display line
@@ -1090,28 +1128,7 @@ class WarnScreen(Screen):
 
     def slash_ACTION(self):
         """ TBD """
-        hint = 'must be a valid python regex'
-        regex = None # compiled
-        pattern = self.search
-
-        while True:
-            prompt = f'Enter search pattern [{hint}]'
-            pattern = self.win.answer(prompt=prompt,
-                                  seed=str(pattern), height=1)
-            if pattern is None: # aborted
-                return
-
-            if not pattern:
-                self.search = ''
-                self.regex = None
-                return
-            try:
-                regex = re.compile(pattern, re.IGNORECASE)
-                self.regex, self.search = regex, pattern
-                return
-            except Exception as whynot:
-                hint = str(whynot)
-                continue
+        self.regex, self.search = self.slash_PROMPT(self.search)
 
 class HelpScreen(Screen):
     """HELP screen"""
@@ -1412,9 +1429,20 @@ class GrubWiz:
                     result_sections.append((':', None))  # Add the colon without formatting
                     i += len(key_name) + 1  # Skip past key and colon
                 else:
-                    # Not a key pattern, just regular character
-                    current_text += line[i]
-                    i += 1
+                    match = re.match(r'/(\S+)', line[i:])
+                    if match:
+                        # Found a search pattern
+                        if current_text:
+                            result_sections.append((current_text, None))
+                            current_text = ""
+                        
+                        full_pattern = match.group(0)  # includes the /
+                        result_sections.append((full_pattern, cs.A_BOLD|cs.A_REVERSE))
+                        i += len(full_pattern)
+                    else:
+                        # Not a key pattern, just regular character
+                        current_text += line[i]
+                        i += 1
 
             else:
                 # Regular character
@@ -1505,7 +1533,10 @@ class GrubWiz:
         value = self.param_values.get(param_name, None)
         if value not in (GrubFile.COMMENT, GrubFile.ABSENT):
             self.saved_active_param_values[param_name] = value
-            self.param_values[param_name] = GrubFile.COMMENT
+            if self.prev_values[param_name] == GrubFile.ABSENT:
+                self.param_values[param_name] = GrubFile.ABSENT
+            else:
+                self.param_values[param_name] = GrubFile.COMMENT
             return True
         return False
 
