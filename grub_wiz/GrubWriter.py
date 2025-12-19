@@ -81,8 +81,8 @@ class GrubWriter:
                     else:
                         # Debian/Arch style: /boot/grub/grub.cfg (Universal fallback)
                         return command, Path("/boot/grub/grub.cfg")
-
         return None, None
+
     def _find_grub_check_syntax_command(self):
         """ TBD """
         for cmd in GRUB_CHECK_COMMANDS:
@@ -166,26 +166,29 @@ class GrubWriter:
         # 2: Run grub-script-check Validation ---
 
         try:
-            cmd = [self.check_command, str(temp_path)]
+            if self.check_command:
+                cmd = [self.check_command, str(temp_path)]
 
-            print(f'+ {cmd[0]} {str(cmd[1])!r}')
+                print(f'+ {cmd[0]} {str(cmd[1])!r}')
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=False
-            )
-
-            if result.returncode != 0:
-                error_output = result.stdout.strip() + "\n" + result.stderr.strip()
-                shutil.copy2(temp_path, '/tmp/ERROR_grub_check')
-                return False, (
-                    f"FAILED: {self.check_command} returned {result.returncode}.\n"
-                    f"Your changes were NOT saved to {self.target_path}.\n"
-                    f"---------------------------------------------------\n"
-                    f"{error_output}"
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    check=False
                 )
+
+                if result.returncode != 0:
+                    error_output = result.stdout.strip() + "\n" + result.stderr.strip()
+                    shutil.copy2(temp_path, '/tmp/ERROR_grub_check')
+                    return False, (
+                        f"FAILED: {self.check_command} returned {result.returncode}.\n"
+                        f"Your changes were NOT saved to {self.target_path}.\n"
+                        f"---------------------------------------------------\n"
+                        f"{error_output}"
+                    )
+            else:
+                print(f"WARNING: skipped syntax check; did not find {GRUB_CHECK_COMMANDS}")
 
             # --- Step 3: Commit/Copy the Validated File ---
             print(f'+ cp {str(temp_path)!r} {str(self.target_path)!r}')
