@@ -1224,6 +1224,7 @@ class GrubWiz:
         except Exception:
             pass
         self.warn_db = WarnDB(param_cfg=self.param_cfg)
+        self.refresh_backup_list()
 
     def setup_win(self):
         """TBD """
@@ -1671,11 +1672,14 @@ class GrubWiz:
         checksum = self.backup_mgr.calc_checksum(GRUB_DEFAULT_PATH)
         if not self.backups:
             self.backup_mgr.create_backup('orig')
+            self.refresh_backup_list()
 
         elif checksum not in self.backups:
             answer = self.request_backup_tag(f'Enter a tag to back up {GRUB_DEFAULT_PATH}')
             if answer:
                 self.backup_mgr.create_backup(answer)
+                self.refresh_backup_list()
+
         self.grub_checksum = checksum # checksum of loaded grub
 
     def really_wanna(self, act):
@@ -1697,6 +1701,7 @@ class GrubWiz:
             self.grub_file.param_data[param_name].new_value = pair[1]
 
         self.win.stop_curses()
+        time.sleep(.75)
         print("\033[2J\033[H") # 'clear'
         print('\n\n===== Leaving grub-wiz screens to update GRUB ====> ')
         # print('Check for correctness...')
@@ -1724,31 +1729,36 @@ class GrubWiz:
                 print(install_rv[1])
                 ok = False
         if ok:
-            os.system('\n\necho "OK ... /etc/grub newly written/updated"')
-            print('\n\nUpdate successful! Choose:')
+            os.system('\n\necho "OK ... /etc/default/grub newly written/updated"')
+        else:
+            os.system('\n\necho "FAIL ... /etc/default/grub NOT written/updated"')
+        print('\n\nChoose:')
+        if ok:
             print('  [r]eboot now')
             print('  [p]oweroff')
-            print('  ENTER to return to grub-wiz screen')
+        print('  [q]uit')
+        print('  ENTER to return to grub-wiz screen')
 
-            choice = input('\n> ').strip().lower()
+        choice = input('\n> ').strip().lower()
 
-            if choice == 'r':
-                print('\nRebooting...')
-                os.system('reboot')
-                sys.exit(0)  # Won't reach here, but just in case
-            elif choice == 'p':
-                print('\nPowering off...')
-                os.system('poweroff')
-                sys.exit(0)  # Won't reach here, but just in case
-            # Otherwise continue to grub-wiz
+        if choice == 'r':
+            print('\nRebooting...')
+            os.system('reboot')
+            sys.exit(0)  # Won't reach here, but just in case
+        elif choice == 'p':
+            print('\nPowering off...')
+            os.system('poweroff')
+            sys.exit(0)  # Won't reach here, but just in case
+        elif choice == 'q':
+            print('\nQuitting grub-wiz...')
+            sys.exit(0)  # Won't reach here, but just in case
+        # Otherwise continue to grub-wiz
         else:
-            input('\n\n===== Grub Update FAILED; Press ENTER to return to grub-wiz ====> ')
-
-        self.win.start_curses()
-        if ok:
-            self.reinit_gw()
-            self.ss = ScreenStack(self.win, self.spins, SCREENS, self.screens)
-            self.do_start_up_backup()
+            self.win.start_curses()
+            if ok:
+                self.reinit_gw()
+                self.ss = ScreenStack(self.win, self.spins, SCREENS, self.screens)
+                self.do_start_up_backup()
 
     def find_in(self, value, enums=None, cfg=None):
         """ Find the value in the list of choices using only
@@ -1941,8 +1951,6 @@ def main():
         except Exception as whynot:
             print(f'ERR: failed "factory reset" [{whynot}]')
         sys.exit(0)
-
-
 
     time.sleep(1.0)
     wiz.main_loop()

@@ -124,6 +124,7 @@ class BackupMgr:
 
             # Set ownership to real user
             self.user_config.give_to_user(new_backup_path, mode=0o644)
+            existing_backups = self.get_backups()
 
             print(f"Success: Created new backup: {new_backup_path.name}")
             return new_backup_path
