@@ -2,6 +2,7 @@
 """ TBD """
 
 import os
+import re
 import subprocess
 import json
 from types import SimpleNamespace
@@ -197,6 +198,8 @@ class WizValidator:
         def avi(value):
             """Returns value if not void, else '#' (won't match any real GRUB value)"""
             return value if exist(value) else '#'
+        def empty(value):
+            return avi(value) in ('#', '', '""', "''")
         def unquote(value):
             if isinstance(value, str):
                 if value.startswith("'"):
@@ -239,9 +242,9 @@ class WizValidator:
 
         # if _DEFAULT is saved, then _SAVEDEFAULT must be true
         p1, v1, p2, v2 = getvals('GRUB_DEFAULT', 'GRUB_SAVEDEFAULT')
-        bad = p1 and avi(v1) in quotes('saved') and avi(v2) not in quotes('true')
-        hey_if(bad, p1, 4, f'when "saved", {sh(p2)} must be "true"')
-        hey_if(bad, p2, 4, f'when not "true", {sh(p1)} cannot be "saved"')
+        bad = p1 and avi(v1) in quotes('saved') and avi(v2) in quotes('false')
+        hey_if(bad, p1, 4, f'when "saved", {sh(p2)} cannot be "false"')
+        hey_if(bad, p2, 4, f'when "false", {sh(p1)} cannot be "saved"')
 
         # TIMEOUT=0 & TIMEOUT_STYLE=hidden (critical - unrecoverable state)
         p1, v1, p2, v2 = getvals('GRUB_TIMEOUT', 'GRUB_TIMEOUT_STYLE')
@@ -249,15 +252,10 @@ class WizValidator:
         hey_if(bad, p1, 4, f'when 0, {sh(p2)} cannot be "hidden"')
         hey_if(bad, p2, 4, f'when "hidden", {sh(p1)} cannot be 0')
 
-        # 'quiet' belongs only in GRUB_CMDLINE_LINUX_DEFAULT
-        p1, v1, p2, v2 = getvals('GRUB_CMDLINE_LINUX_DEFAULT', 'GRUB_CMDLINE_LINUX')
-        bad = p2 and 'quiet' in avi(v2)
-        hey_if(bad, p2, 3, f'"quiet" belongs only in {sh(p1)}')
-
         # 'splash' belongs only in GRUB_CMDLINE_LINUX_DEFAULT
         p1, v1, p2, v2 = getvals('GRUB_CMDLINE_LINUX_DEFAULT', 'GRUB_CMDLINE_LINUX')
-        bad = p2 and 'splash' in avi(v2)
-        hey_if(bad, p2, 3, f'"splash" belongs only in {sh(p1)}')
+        bad = p2 and re.search(r'\b(splash|quiet|rhgb)\b', avi(v2))
+        hey_if(bad, p2, 3, f'splash/quiet/rhgb belong only in {sh(p1)}')
 
         # LUKS active but no rd.luks.uuid in GRUB_CMDLINE_LINUX
         p1, v1 = getvals('GRUB_CMDLINE_LINUX')
@@ -276,7 +274,7 @@ class WizValidator:
 
         # Recovery cmdline set but recovery disabled
         p1, v1, p2, v2 = getvals('GRUB_CMDLINE_LINUX_RECOVERY', 'GRUB_DISABLE_RECOVERY')
-        bad = p1 and avi(v1) and avi(v2) in quotes('true')
+        bad = p1 and not empty(v1) and avi(v2) in quotes('true')
         hey_if(bad, p1, 2, f'when set, {sh(p2)} must not be "true"')
         hey_if(bad, p2, 2, f'when "true", {sh(p1)} should not be set')
 

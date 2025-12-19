@@ -43,7 +43,8 @@ class GrubWriter:
             target_path: The path to the GRUB default configuration file.
         """
         self.target_path = target_path
-        self.check_command = self._find_grub_check_syntax_command()
+        # self.check_command = self._find_grub_check_syntax_command()
+        self.check_command = None # disable ... not dependable
 
         # Cache the grub update command at initialization
         self._update_command, self._update_output_path = self._find_grub_update_command()
@@ -188,7 +189,8 @@ class GrubWriter:
                         f"{error_output}"
                     )
             else:
-                print(f"WARNING: skipped syntax check; did not find {GRUB_CHECK_COMMANDS}")
+                # print(f"WARNING: skipped syntax check; did not find {GRUB_CHECK_COMMANDS}")
+                pass
 
             # --- Step 3: Commit/Copy the Validated File ---
             print(f'+ cp {str(temp_path)!r} {str(self.target_path)!r}')

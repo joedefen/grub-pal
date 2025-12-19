@@ -62,7 +62,7 @@ Menu Entries:
     edit_re: ^(\d+|saved|".*"|'.*')$
     enums:
       0: Boot first menu entry (usually the latest OS).
-      saved: Boot previously booted OS (ensure SAVEDEFAULT is true)
+      saved: Boot previously booted OS (ensure SAVEDEFAULT is not false)
     guidance: "Sets the default menu entry to boot. Can be:
       \n: An index number (starting from 0).
       \n: A full menu entry title (case-sensitive).
@@ -75,7 +75,8 @@ Menu Entries:
       'false': Do not automatically save the last booted entry.
       'true': Save the last booted entry as the new default.
     guidance: "Automatically saves the last selected menu entry as the new default.
-      \n: Required when GRUB_DEFAULT='saved'.
+      \n: Cannot be 'false' when GRUB_DEFAULT='saved'.
+      \n: An absent value is treated as 'true'.
       \n%ENUMS%"
 
   GRUB_DISABLE_OS_PROBER:
