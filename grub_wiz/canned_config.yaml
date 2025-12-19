@@ -161,7 +161,7 @@ Visual Appearance:
 
   GRUB_BACKGROUND:
     default: ''
-    edit_re: (?i)^(.*\.(png|jpg|jpeg|tga|bmp))?$
+    edit_re: (?i)^(''|""|.*\.(png|jpg|jpeg|tga|bmp))?$
     enums: {}
     guidance: "Full path and filename to a background image.
       \n: Must be a JPEG or PNG file path.
@@ -170,7 +170,7 @@ Visual Appearance:
 
   GRUB_THEME:
     default: ''
-    edit_re: (?i)^(.*theme\.txt)?$
+    edit_re: (?i)^(''|""|.*theme\.txt)?$
     enums: {}
     guidance: "Path to the theme.txt file for a custom GRUB theme.
       \n: This overrides the background image setting (GRUB_BACKGROUND)."
