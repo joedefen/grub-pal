@@ -1155,8 +1155,9 @@ class GrubWiz:
             ' GRUB_SERIAL_COMMAND GRUB_GFXMODE GRUB_THEME GRUB_BACKGROUND'
             ' GRUB_TERMINAL_INPUT / GRUB_TERMINAL_OUTPUT').split()
 
-    def __init__(self):
+    def __init__(self, cli_opts=None):
         GrubWiz.singleton = self
+        self.cli_opts = cli_opts
         self.win = None # place 1st
         self.spinner = None
         self.spins = None
@@ -1296,6 +1297,7 @@ class GrubWiz:
         win_opts.return_if_pos_change = True
         win_opts.single_cell_scroll_indicator = True
         win_opts.dialog_abort = 'ESC'
+        win_opts.answer_show_redraws = self.cli_opts.answer_timeout_debug
         self.win = ConsoleWindow(win_opts)
 
         # Initialize screen objects first (before ScreenStack)
@@ -1961,9 +1963,11 @@ def main():
                         help='test load ~/.config/grub-wiz/custom_config.yaml')
     parser.add_argument('--validator-demo', action='store_true',
                         help='for test only: run validator demo')
+    parser.add_argument('--answer-timeout-debug', action='store_true',
+                        help='for test only: enables screen redraw indicator')
     opts = parser.parse_args()
 
-    wiz = GrubWiz()
+    wiz = GrubWiz(cli_opts=opts)
     if opts.validator_demo:
         wiz.wiz_validator.demo(wiz.param_defaults)
         sys.exit(0)
