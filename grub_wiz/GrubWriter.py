@@ -14,7 +14,10 @@ from typing import Tuple, Optional, List
 GRUB_DEFAULT_PATH = Path("/etc/default/grub")
 
 # The required validation tool on most Linux distributions
-GRUB_CHECK_COMMAND = "grub-script-check"
+GRUB_CHECK_COMMANDS = [
+    "grub2-script-check",
+    "grub-script-check",
+]
 
 # The commands to attempt for updating the configuration, in order of preference/availability
 GRUB_UPDATE_COMMANDS = [
@@ -40,7 +43,7 @@ class GrubWriter:
             target_path: The path to the GRUB default configuration file.
         """
         self.target_path = target_path
-        self.check_command = GRUB_CHECK_COMMAND
+        self.check_command = self._find_grub_check_syntax_command()
 
         # Cache the grub update command at initialization
         self._update_command, self._update_output_path = self._find_grub_update_command()
@@ -80,6 +83,12 @@ class GrubWriter:
                         return command, Path("/boot/grub/grub.cfg")
 
         return None, None
+    def _find_grub_check_syntax_command(self):
+        """ TBD """
+        for cmd in GRUB_CHECK_COMMANDS:
+            if shutil.which(cmd):
+                return cmd 
+        return None
 
     def run_grub_update(self) -> Tuple[bool, str]:
         """
@@ -154,22 +163,7 @@ class GrubWriter:
         if os.geteuid() != 0:
             return False, f"Permission Error: Root access is required to modify {self.target_path} and run validation/update tools."
 
-#       temp_file: Optional[tempfile._TemporaryFileWrapper] = None
-
-#       try:
-#           # --- Step 1: Write to a Secure Temporary File ---
-#           temp_file = tempfile.NamedTemporaryFile(
-#               mode='w',
-#               delete=False,
-#               encoding='utf-8',
-#               suffix=".grub_check"
-#           )
-#           temp_file.write(contents)
-#           temp_file.close()
-
-#           temp_path = Path(temp_file.name)
-
-#           # --- Step 2: Run grub-script-check Validation ---
+        # 2: Run grub-script-check Validation ---
 
         try:
             cmd = [self.check_command, str(temp_path)]
@@ -205,7 +199,7 @@ class GrubWriter:
             return True, f"OK: replaced {self.target_path!r}"
 
         except FileNotFoundError:
-            return False, f"Error: Required utility '{self.check_command}' not found. Please ensure GRUB is correctly installed."
+            return False, f"Error: Required utility '{self.check_commands}' not found. Please ensure GRUB is correctly installed."
 
         except PermissionError:
             return False, f"Permission Error: Cannot write to {self.target_path} or execute GRUB utilities."

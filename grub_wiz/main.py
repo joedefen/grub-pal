@@ -1712,10 +1712,11 @@ class GrubWiz:
             ok = False
             
         if ok:
-            commit_rv = self.grub_writer.commit_validated_grub_config(
+            commit_rv, err = self.grub_writer.commit_validated_grub_config(
                 candidate_path)
             if not commit_rv:
                 ok = False
+                print(err)
         
         if ok:
             install_rv = self.grub_writer.run_grub_update()
@@ -1741,7 +1742,7 @@ class GrubWiz:
                 sys.exit(0)  # Won't reach here, but just in case
             # Otherwise continue to grub-wiz
         else:
-            input('\n\n===== Press ENTER to return to grub-wiz ====> ')
+            input('\n\n===== Grub Update FAILED; Press ENTER to return to grub-wiz ====> ')
 
         self.win.start_curses()
         if ok:
