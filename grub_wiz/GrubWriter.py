@@ -1,31 +1,16 @@
 #!/usr/bin/env python3
+"""
+Handles updating /etc/default/grub and running grub-install
+"""
+# pylint: disable=line-too-long,invalid-name,broad-exception-caught
 
 import os
 import sys
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
-from typing import Tuple, Optional, List
-
-# --- Constants ---
-
-# The target file (requires root permission for writing)
-GRUB_DEFAULT_PATH = Path("/etc/default/grub")
-
-# The required validation tool on most Linux distributions
-GRUB_CHECK_COMMANDS = [
-    "grub2-script-check",
-    "grub-script-check",
-]
-
-# The commands to attempt for updating the configuration, in order of preference/availability
-GRUB_UPDATE_COMMANDS = [
-    "update-grub",        # High-level wrapper (Debian/Ubuntu)
-    "grub2-mkconfig",     # RHEL/Fedora core tool
-    "grub-mkconfig"       # Universal core tool (requires -o path)
-]
-
+from typing import Tuple, List
+from .DistroVars import DistroVars
 
 class GrubWriter:
     """
@@ -35,61 +20,19 @@ class GrubWriter:
     avoiding repeated lookups during the session.
     """
 
-    def __init__(self, target_path: Path = GRUB_DEFAULT_PATH):
+    def __init__(self, distro_vars: DistroVars):
         """
         Initialize the GrubWriter.
 
         Args:
-            target_path: The path to the GRUB default configuration file.
+            distro_vars: DistroVars instance containing distribution-specific paths and commands
         """
-        self.target_path = target_path
-        # self.check_command = self._find_grub_check_syntax_command()
-        self.check_command = None # disable ... not dependable
+        self.distro_vars = distro_vars
+        self.etc_grub = self.distro_vars.etc_grub
 
-        # Cache the grub update command at initialization
-        self._update_command, self._update_output_path = self._find_grub_update_command()
-
-    def _find_grub_update_command(self) -> Tuple[Optional[str], Optional[Path]]:
-        """
-        Finds the correct command and output path for generating the GRUB config.
-
-        Returns:
-            A tuple (command: str or None, output_path: Path or None)
-        """
-        if os.geteuid() != 0:
-            return None, None
-
-        for command in GRUB_UPDATE_COMMANDS:
-            if shutil.which(command):
-                # 1. High-level wrapper: update-grub
-                if command == "update-grub":
-                    # update-grub is self-contained and handles its own path
-                    return command, None
-
-                # 2. Low-level core tools: grub-mkconfig or grub2-mkconfig
-                elif command in ["grub-mkconfig", "grub2-mkconfig"]:
-                    # The output path varies by distro/UEFI/BIOS.
-                    # We prioritize the RHEL/Fedora standard path for the 'grub2-' variant,
-                    # and the Debian/Arch standard path for the 'grub-' variant.
-
-                    # Note: Detecting the *absolute* correct path is complex (involving
-                    # checking /etc/grub2.cfg symlinks, UEFI status, etc.).
-                    # For robust code, we stick to the most common default paths.
-
-                    if command == "grub2-mkconfig":
-                        # RHEL/Fedora style: /boot/grub2/grub.cfg (BIOS/Legacy)
-                        return command, Path("/boot/grub2/grub.cfg")
-                    else:
-                        # Debian/Arch style: /boot/grub/grub.cfg (Universal fallback)
-                        return command, Path("/boot/grub/grub.cfg")
-        return None, None
-
-    def _find_grub_check_syntax_command(self):
-        """ TBD """
-        for cmd in GRUB_CHECK_COMMANDS:
-            if shutil.which(cmd):
-                return cmd 
-        return None
+        # Cache the grub update command and config file path at initialization
+        self.update_grub = distro_vars.update_grub
+        self.grub_cfg = distro_vars.grub_cfg
 
     def run_grub_update(self) -> Tuple[bool, str]:
         """
@@ -102,25 +45,22 @@ class GrubWriter:
         if os.geteuid() != 0:
             return False, "ERROR: root required to run GRUB update command"
 
-        if not self._update_command:
-            return False, "ERROR: cannot find GRUB updater (update-grub, grub-mkconfig, and grub2-mkconfig) not on $PATH"
+        if not self.update_grub:
+            return False, "ERROR: cannot find GRUB update cmd"
 
         # Build the command array
-        command_to_run: List[str] = [self._update_command]
+        command_to_run: List[str] = [self.update_grub]
 
-        if self._update_output_path:
-            # If using grub-mkconfig or grub2-mkconfig, we must provide the output flag and path
-            command_to_run.extend(["-o", str(self._update_output_path)])
+        if self.update_grub.endswith('-mkconfig') and self.grub_cfg:
+            # If using grub-mkconfig or grub2-mkconfig,
+            # we must provide the output flag and path
+            command_to_run.extend(["-o", str(self.grub_cfg)])
 
         print(f"+  {' '.join(command_to_run)}")
         try:
             # Execute the command
-            result = subprocess.run(
-                command_to_run,
-                capture_output=True,
-                text=True,
-                check=False
-            )
+            result = subprocess.run( command_to_run, capture_output=True,
+                text=True, check=False)
 
             # Check for success
             if result.returncode != 0:
@@ -144,10 +84,9 @@ class GrubWriter:
 
         The process is:
         1. Write contents to a secure temporary file.
-        2. Run 'grub-script-check' on the temporary file.
-        3. If validation succeeds, copy the temporary file over the target_path.
-        4. Explicitly set permissions to 644 (rw-r--r--) for security and readability.
-        5. If validation fails, delete the temporary file and return the error.
+        2. If validation succeeds, copy the temporary file over the target_path.
+        3. Explicitly set permissions to 644 (rw-r--r--) for security and readability.
+        4. If validation fails, delete the temporary file and return the error.
 
         NOTE: The caller should call run_grub_update() immediately after this method
         if commit is successful.
@@ -162,87 +101,32 @@ class GrubWriter:
         """
         # 1. Check for root permissions
         if os.geteuid() != 0:
-            return False, f"Permission Error: Root access is required to modify {self.target_path} and run validation/update tools."
+            return False, f"Permission Error: Root access is required to modify {self.etc_grub} and run validation/update tools."
 
-        # 2: Run grub-script-check Validation ---
 
         try:
-            if self.check_command:
-                cmd = [self.check_command, str(temp_path)]
+            # --- Step 2: Commit/Copy the Validated File ---
+            print(f'+ cp {str(temp_path)!r} {str(self.etc_grub)!r}')
+            shutil.copy2(temp_path, self.etc_grub)
 
-                print(f'+ {cmd[0]} {str(cmd[1])!r}')
-
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    check=False
-                )
-
-                if result.returncode != 0:
-                    error_output = result.stdout.strip() + "\n" + result.stderr.strip()
-                    shutil.copy2(temp_path, '/tmp/ERROR_grub_check')
-                    return False, (
-                        f"FAILED: {self.check_command} returned {result.returncode}.\n"
-                        f"Your changes were NOT saved to {self.target_path}.\n"
-                        f"---------------------------------------------------\n"
-                        f"{error_output}"
-                    )
-            else:
-                # print(f"WARNING: skipped syntax check; did not find {GRUB_CHECK_COMMANDS}")
-                pass
-
-            # --- Step 3: Commit/Copy the Validated File ---
-            print(f'+ cp {str(temp_path)!r} {str(self.target_path)!r}')
-            shutil.copy2(temp_path, self.target_path)
-
-            # --- Step 4: Explicitly set permissions to 644 (rw-r--r--) ---
+            # --- Step 3: Explicitly set permissions to 644 (rw-r--r--) ---
             # This guarantees the standard permissions for /etc/default/grub
             # The octal '0o644' means: owner (6=rw-), group (4=r--), others (4=r--)
-            os.chmod(self.target_path, 0o644)
+            os.chmod(self.etc_grub, 0o644)
 
-            return True, f"OK: replaced {self.target_path!r}"
-
-        except FileNotFoundError:
-            return False, f"Error: Required utility '{self.check_commands}' not found. Please ensure GRUB is correctly installed."
+            return True, f"OK: replaced {self.etc_grub!r}"
 
         except PermissionError:
-            return False, f"Permission Error: Cannot write to {self.target_path} or execute GRUB utilities."
+            return False, f"Permission Error: Cannot write to {self.etc_grub} or execute GRUB utilities."
 
         except Exception as e:
             return False, f"An unexpected error occurred during commit: {e}"
 
         finally:
-            # --- Step 5: Clean up the temporary file ---
+            # --- Step 4: Clean up the temporary file ---
             if temp_path and os.path.exists(temp_path):
                 try:
                     os.unlink(temp_path)
                 except Exception as e:
                     print(f"Warning: Failed to rm temp file {temp_path}: {e}",
                           file=sys.stderr)
-
-
-# --- Example Usage (Not runnable without root/grub-script-check) ---
-if __name__ == '__main__':
-    print("--- Example: GRUB Configuration Writer ---")
-    print("This requires root privileges and installed GRUB utilities to run successfully.")
-
-    # Example of valid content
-    valid_content = "GRUB_TIMEOUT=5\nGRUB_DEFAULT=0\nGRUB_CMDLINE_LINUX_DEFAULT=\"quiet splash\"\n"
-
-    # Simulate commit to a non-critical file for testing (still needs root for permissions checks)
-    # Note: If grub-mkconfig is found, it will try to write to /boot/grub/grub.cfg which needs root.
-
-    # 1. Create a GrubWriter instance
-    # writer = GrubWriter()
-
-    # 2. Attempt commit (requires root)
-    # success, message = writer.commit_validated_grub_config(valid_content)
-    # print(f"Commit Success: {success}\nMessage: {message}")
-
-    # 3. If commit succeeded, attempt update (requires root)
-    # if success:
-    #     update_success, update_message = writer.run_grub_update()
-    #     print(f"\nUpdate Success: {update_success}\nMessage: {update_message}")
-    # else:
-    #     print("\nSkipping GRUB update due to failed commit.")

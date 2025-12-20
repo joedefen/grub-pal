@@ -2,31 +2,12 @@
 r"""
     grub-wiz: the help grub file editor assistant
 
-1. WARNING Screen
-    Exhaustive view of ALL validation checks (not just triggered ones)
-    Launched from REVIEW screen
-    Flat list: param_name, severity (1-4 stars), warning_text, state (triggered/inhibited)
-    Filterable and sortable
-    X-key toggle to inhibit/allow individual warnings
-    Already done: WarnDB refactoring, all_warn_info with severity
-2. [m]ore Key - Extended Options Header
-    Toggle visibility of third header line on REVIEW, EDIT, RESTORE screens
-    Shows additional keys: warning-db, restore, expert-edit, header-style
-    Keys work whether visible or not (pure progressive disclosure)
-    Pushes existing second header line down when active
-3. Backup Comparison (RESTORE screen)
-    REF/BASE column - exclusive designation for one backup file
-    Key to set/unset REF on selected backup
-    [c]ompare key - shows param-by-param diff between selected backup and REF
-    Only displays changed params (value changes or comment status changes)
-    Format: PARAM: old_value → new_value
-
 """
 # pylint: disable=invalid-name,broad-exception-caught
 # pylint: disable=too-many-locals,too-few-public-methods,too-many-branches
 # pylint: disable=too-many-nested-blocks,too-many-statements
 # pylint: disable=too-many-public-methods,line-too-long
-# pylint: disable=too-many-instance-attributes
+# pylint: disable=too-many-instance-attributes,too-many-lines
 
 
 import sys
@@ -41,6 +22,7 @@ from types import SimpleNamespace
 from typing import Any #, Tuple #, Opt
 from console_window import OptionSpinner, ConsoleWindow, ConsoleWindowOpts
 from .CannedConfig import CannedConfig, EXPERT_EDIT
+from .DistroVars import DistroVars
 from .GrubFile import GrubFile
 from .GrubCfgParser import get_top_level_grub_entries
 from .BackupMgr import BackupMgr, GRUB_DEFAULT_PATH
@@ -298,7 +280,7 @@ class Screen:
             method()
             return True
         return False
-    
+
     def slash_PROMPT(self, current: str):
         """ TBD """
         hint = 'must be a valid python regex'
@@ -310,7 +292,7 @@ class Screen:
             pattern = self.win.answer(prompt=prompt,
                                   seed=str(pattern), height=1)
             if pattern is None: # aborted
-                return
+                return '', None
 
             if not pattern:
                 return '', None
@@ -360,7 +342,7 @@ class HomeScreen(Screen):
     def left_side_box(lines, indent=3):
         """ draw a box """
         if len(lines) <= 0:
-            return
+            return []
         rv = []
         chars = ['┃'] + ['│'] * (len(lines)-1)
         if len(chars) >= 2:
@@ -585,7 +567,7 @@ class HomeScreen(Screen):
         if gw.navigate_to(REVIEW_ST):
             gw.must_reviews = None  # reset
             gw.clues = []
-    
+
     def slash_ACTION(self):
         """ TBD"""
         if self.gw.show_hidden_params:
@@ -752,6 +734,8 @@ class ReviewScreen(HomeScreen):
 
     def write_ACTION(self):
         """Handle 'w' key on REVIEW screen - update grub"""
+        # Note: update_grub is now a critical requirement, so is_crippled only indicates
+        # missing grub_cfg (which affects menu entry enumeration, not update capability)
         self.gw.update_grub()
 
     def slash_ACTION(self):
@@ -848,11 +832,11 @@ class RestoreScreen(Screen):
         if 0 <= idx < len(gw.ordered_backup_pairs):
             key = gw.ordered_backup_pairs[idx][0]
             gw.backup_mgr.restore_backup(gw.backups[key])
-            if gw.navigate_back():
-                assert gw.ss.is_curr(HOME_ST)
-                gw.reinit_gw()
-                gw.ss = ScreenStack(gw.win, gw.spins, SCREENS, gw.screens)
-                gw.do_start_up_backup()
+            while gw.navigate_back():
+                pass
+            gw.reinit_gw()
+            gw.ss = ScreenStack(gw.win, gw.spins, SCREENS, gw.screens)
+            gw.do_start_up_backup()
 
     def delete_ACTION(self):
         """Handle 'd' key on RESTORE screen - delete selected backup"""
@@ -1098,7 +1082,7 @@ class WarnScreen(Screen):
                 param_name, message = key.split(': ', 1)
                 # Strip GRUB_ prefix
                 display_param = param_name.replace('GRUB_', '', 1)
-                
+
                 # Create full line for searching (always has param name)
                 full_line = f'[{inh}] {stars:>4} {display_param}: {message}'
 
@@ -1159,6 +1143,8 @@ class GrubWiz:
         GrubWiz.singleton = self
         self.cli_opts = cli_opts
         self.win = None # place 1st
+        self.canned_config = CannedConfig()
+        self.distro_vars = DistroVars(self.canned_config.data)
         self.spinner = None
         self.spins = None
         self.sections = None
@@ -1175,7 +1161,7 @@ class GrubWiz:
         self.menu_entries = None
         self.backup_mgr = BackupMgr()
         self.warn_db = None
-        self.grub_writer = GrubWriter()
+        self.grub_writer = GrubWriter(distro_vars=self.distro_vars)
         self.param_discovery = ParamDiscovery.get_singleton()
         self.wiz_validator = None
         self.backups = None
@@ -1201,8 +1187,11 @@ class GrubWiz:
         self.param_defaults = {}
         self.must_reviews = None
         self.ss = None
-        self.canned_config = CannedConfig()
         self.sections = self.canned_config.data
+        section_names = list(self.sections.keys())
+        for section_name in section_names:
+            if section_name.startswith('_'):
+                del self.sections[section_name]
 
         names = []
         for params in self.sections.values():
@@ -1240,8 +1229,8 @@ class GrubWiz:
             self.param_values[param_name] = value
         self.param_name_wid = name_wid - len('GRUB_')
         self.prev_values.update(self.param_values)
-
-        self.menu_entries = get_top_level_grub_entries()
+        self.menu_entries = get_top_level_grub_entries(
+                                self.distro_vars.grub_cfg)
         try:
             self.param_cfg['GRUB_DEFAULT']['enums'].update(self.menu_entries)
         except Exception:
@@ -1270,12 +1259,12 @@ class GrubWiz:
         spinner.add_key('hide', 'x - inh/allow warnings', category='action')
         spinner.add_key('show_hidden', 's - show/hide inactive params', category='action')
         spinner.add_key('write', 'w - write params and run "grub-update"', category='action')
-        
+
         spinner.add_key('guide', 'g - guidance level', vals=['Off', 'Enums', "Full"])
         spinner.add_key('fancy_headers', 'f - cycle fancy headers (Off/Underline/Reverse)',
                         vals=['Underline', 'Reverse', 'Off'])
 
-        
+
         spinner.add_key('enter_restore', 'R - enter restore screen', category='action')
         spinner.add_key('enter_warnings', 'W - enter WARNINGs screen', category='action')
 
@@ -1442,7 +1431,7 @@ class GrubWiz:
                         if current_text:
                             result_sections.append((current_text, None))
                             current_text = ""
-                        
+
                         full_pattern = match.group(0)  # includes the /
                         result_sections.append((full_pattern, cs.A_BOLD|cs.A_REVERSE))
                         i += len(full_pattern)
@@ -1696,7 +1685,7 @@ class GrubWiz:
         hint = f'regex={regex}'
         while True:
             answer = self.win.answer(seed=seed,
-                                     prompt=f"{prompt} [{hint}]]", height=1)
+                        prompt=f"{prompt} [{hint}]]", height=1)
             if answer is None:
                 return None
             answer = answer.strip()
@@ -1756,14 +1745,14 @@ class GrubWiz:
         write_rv = self.grub_file.write_file(candidate_path)
         if not write_rv: # failure
             ok = False
-            
+
         if ok:
             commit_rv, err = self.grub_writer.commit_validated_grub_config(
                 candidate_path)
             if not commit_rv:
                 ok = False
                 print(err)
-        
+
         if ok:
             install_rv = self.grub_writer.run_grub_update()
             if not install_rv[0]:
@@ -1971,7 +1960,7 @@ def main():
     if opts.validator_demo:
         wiz.wiz_validator.demo(wiz.param_defaults)
         sys.exit(0)
-        
+
     if opts.validate_custom_config:
         print(f'grub-wiz: using {wiz.canned_config.using_path}')
         if 'custom' not in str(wiz.canned_config.using_path):

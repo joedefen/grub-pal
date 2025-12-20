@@ -7,7 +7,6 @@ import re
 import sys
 from typing import List, Dict
 
-GRUB_CFG_PATH = '/boot/grub/grub.cfg'
 # Keywords that mark a bootable entry or a sub-menu.
 ENTRY_KEYWORDS = ['menuentry', 'submenu']
 
@@ -21,7 +20,7 @@ SPECIAL_EXCLUSIONS = [
 ]
 
 
-def get_top_level_grub_entries(only_very_top=True) -> List[Dict[str, str]]:
+def get_top_level_grub_entries(grub_cfg, only_very_top=False) -> List[Dict[str, str]]:
     """
     Parses the /boot/grub/grub.cfg file to find all top-level menuentry and
     submenu titles, excluding special administrative entries.
@@ -30,17 +29,19 @@ def get_top_level_grub_entries(only_very_top=True) -> List[Dict[str, str]]:
         A list of dictionaries, where each dict has 'type' (menuentry/submenu)
         and 'title' (the exact string used in grub.cfg).
     """
+    if grub_cfg is None:
+        return []
     try:
         # Regex to capture both 'menuentry' and 'submenu' titles.
         # Captures: 1=keyword (menuentry/submenu), 2=title (quoted string)
         # It's highly important to only parse the top-level structure.
         # The line must start with the keyword, followed by one or more spaces,
         # followed by the single-quoted title.
-        with open(GRUB_CFG_PATH, 'r', encoding='utf-8') as f:
+        with open(grub_cfg, 'r', encoding='utf-8') as f:
             content = f.read()
 
     except Exception as e:
-        print(f"ERROR: cannot read {GRUB_CFG_PATH}: {e}", file=sys.stderr)
+        print(f"ERROR: cannot read {grub_cfg}: {e}", file=sys.stderr)
         return []
 
     entry_pattern = re.compile(r"^(\s*)(menuentry)\s+('[^']+')")
