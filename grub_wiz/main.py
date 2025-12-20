@@ -298,7 +298,7 @@ class Screen:
                 return '', None
             try:
                 regex = re.compile(pattern, re.IGNORECASE)
-                return regex, pattern
+                return pattern, regex
             except Exception as whynot:
                 hint = str(whynot)
                 continue
@@ -571,7 +571,7 @@ class HomeScreen(Screen):
     def slash_ACTION(self):
         """ TBD"""
         if self.gw.show_hidden_params:
-            self.regex, self.search = self.slash_PROMPT(self.search)
+            self.search, self.regex = self.slash_PROMPT(self.search)
 
 class ReviewScreen(HomeScreen):
     """REVIEW screen - show diffs and warnings"""
@@ -831,12 +831,14 @@ class RestoreScreen(Screen):
         idx = self.win.pick_pos
         if 0 <= idx < len(gw.ordered_backup_pairs):
             key = gw.ordered_backup_pairs[idx][0]
-            gw.backup_mgr.restore_backup(gw.backups[key])
-            while gw.navigate_back():
-                pass
-            gw.reinit_gw()
-            gw.ss = ScreenStack(gw.win, gw.spins, SCREENS, gw.screens)
-            gw.do_start_up_backup()
+            target = gw.ordered_backup_pairs[idx][1]
+            if gw.really_wanna(f'restore {target.name!r}'):
+                gw.backup_mgr.restore_backup(gw.backups[key])
+                while gw.navigate_back():
+                    pass
+                gw.reinit_gw()
+                gw.ss = ScreenStack(gw.win, gw.spins, SCREENS, gw.screens)
+                gw.do_start_up_backup()
 
     def delete_ACTION(self):
         """Handle 'd' key on RESTORE screen - delete selected backup"""
@@ -844,7 +846,7 @@ class RestoreScreen(Screen):
         idx = self.win.pick_pos
         if 0 <= idx < len(gw.ordered_backup_pairs):
             doomed = gw.ordered_backup_pairs[idx][1]
-            if gw.really_wanna(f'remove {doomed!r}'):
+            if gw.really_wanna(f'remove {doomed.name!r}'):
                 try:
                     os.unlink(doomed)
                 except Exception as exce:
@@ -1070,6 +1072,7 @@ class WarnScreen(Screen):
         all_info = db.all_info
         keys = sorted(all_info.keys())
         prev_param = None
+        self.keys = []
 
         for key in keys:
             sev = all_info[key]
@@ -1117,7 +1120,7 @@ class WarnScreen(Screen):
 
     def slash_ACTION(self):
         """ TBD """
-        self.regex, self.search = self.slash_PROMPT(self.search)
+        self.search, self.regex = self.slash_PROMPT(self.search)
 
 class HelpScreen(Screen):
     """HELP screen"""
