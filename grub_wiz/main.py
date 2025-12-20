@@ -484,8 +484,8 @@ class HomeScreen(Screen):
                     middle += ' [u]ndo'
 
         if cat == 'warn' and review_screen:
-            middle += ' x:allow' if gw.warn_db.is_inhibit(
-                        ident) else ' x:inh'
+            middle += ' x:allow-warning' if gw.warn_db.is_inhibit(
+                        ident) else ' x:inhibit-warning'
 
         if not review_screen and gw.show_hidden_params:
             middle = f'{middle:<15}' ## so search does not move too much
@@ -684,7 +684,7 @@ class ReviewScreen(HomeScreen):
                 gw.clues.append(Clue('nop'))
 
             for hey in ns.heys:
-                warn_key = f'{param_name} {hey[1]}'
+                warn_key = WarnDB.make_key(param_name, hey[1])
                 is_inhibit = gw.warn_db.is_inhibit(warn_key)
                 gw.hidden_stats.warn += int(is_inhibit)
                 stars = '🟌' * len(hey[0])
@@ -1236,6 +1236,12 @@ class GrubWiz:
         except Exception:
             pass
         self.warn_db = WarnDB(param_cfg=self.param_cfg)
+
+        # Run startup audit to clean orphans and populate warning info
+        warns, all_warn_info = self.wiz_validator.make_warns(self.param_values)
+        self.warn_db.audit_info(all_warn_info)
+        self.warn_db.write_if_dirty()  # Persist any cleanup from orphaned warnings
+
         self.refresh_backup_list()
 
     def setup_win(self):

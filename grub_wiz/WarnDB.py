@@ -48,8 +48,11 @@ class WarnDB:
 
     def refresh(self):
         """
-            Reads the warning database from the YAML file.
-            If file doesn't exist, starts with empty state (normal on first run).
+        Reads the warning database from the YAML file.
+        If file doesn't exist, starts with empty state (normal on first run).
+
+        Supports both old format ('warns' list) and new format
+        ('all_warnings' dict + 'inhibited' list) for backward compatibility.
         """
         self.last_read_time = None
         self.dirty_count = 0 # Assume file state is clean
@@ -57,14 +60,21 @@ class WarnDB:
         # File not existing is normal on first run - start fresh
         if not self.yaml_path.exists():
             self.inhibits.clear()
+            self.all_info.clear()
             return True
 
         try:
             with self.yaml_path.open('r') as f:
                 data: Dict[str, Any] = yaml.load(f) or {}
 
-            # Safely cast list data to sets
-            self.inhibits = set(data.get('warns', []))
+            # New format: 'all_warnings' + 'inhibited'
+            if 'inhibited' in data:
+                self.inhibits = set(data.get('inhibited', []))
+                self.all_info = dict(data.get('all_warnings', {}))
+            # Old format: 'warns' list (backward compatibility)
+            else:
+                self.inhibits = set(data.get('warns', []))
+                # all_info will be populated by audit_info()
 
             # Record file modification time
             self.last_read_time = self.yaml_path.stat().st_mtime
@@ -74,15 +84,22 @@ class WarnDB:
             # Only warn on actual errors (not missing file)
             print(f"Warning: Failed to read {self.yaml_path.name}: {e}")
             self.inhibits.clear()
+            self.all_info.clear()
             return True
 
     def write_if_dirty(self) -> bool:
-        """Writes the current hidden state to disk if the dirty count is > 0."""
+        """Writes the current warning database to disk if dirty count is > 0.
+
+        File format:
+            all_warnings: Dict of all warnings with severities (1-4)
+            inhibited: List of inhibited warning keys
+        """
         if self.dirty_count == 0:
             return False
 
         data = {
-            'warns': sorted(list(self.inhibits))
+            'all_warnings': dict(sorted(self.all_info.items())),
+            'inhibited': sorted(list(self.inhibits))
         }
 
         try:
@@ -112,6 +129,22 @@ class WarnDB:
             self.inhibits.remove(composite_id)
             self.dirty_count += 1
 
+    @staticmethod
+    def make_key(param_name: str, message: str) -> str:
+        """
+        Construct a warning key from parameter name and message.
+
+        This centralizes the key format so all code uses the same convention.
+
+        Args:
+            param_name: The GRUB parameter name (e.g., 'GRUB_TIMEOUT')
+            message: The warning message (e.g., 'when 0, TIMEOUT_STYLE cannot be "hidden"')
+
+        Returns:
+            Composite key string (e.g., 'GRUB_TIMEOUT: when 0, TIMEOUT_STYLE cannot be "hidden"')
+        """
+        return f'{param_name}: {message}'
+
     def is_inhibit(self, composite_id: str) -> bool:
         """Checks if a warning should be suppressed."""
         return composite_id in self.inhibits
@@ -135,7 +168,13 @@ class WarnDB:
         self.audited = True
 
         # Update all_info with new data (write with sorted keys so looks good)
-        self.all_info = {k: all_warn_info[k] for k in sorted(all_warn_info)}
+        new_all_info = {k: all_warn_info[k] for k in sorted(all_warn_info)}
+
+        # Mark dirty if all_info changed (new warnings, removed warnings, or severity changes)
+        if new_all_info != self.all_info:
+            self.dirty_count += 1
+
+        self.all_info = new_all_info
 
         # Purge orphaned suppressed warnings
         orphans = []

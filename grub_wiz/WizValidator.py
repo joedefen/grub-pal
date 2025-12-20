@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Tuple, Optional
 from copy import deepcopy
 from .GrubFile import GrubFile
+from .WarnDB import WarnDB
 # pylint: disable=line-too-long,invalid-name,too-many-locals
 # pylint: disable=too-many-branches,too-many-statements
 # pylint: disable=too-many-nested-blocks
@@ -232,7 +233,7 @@ class WizValidator:
             if bad:
                 hey(param_name, severity, message)
             if param_name:
-                key = f'{param_name}: {message}'
+                key = WarnDB.make_key(param_name, message)
                 all_warn_info[key] = severity
         # ------------------------------------------------ #
 
