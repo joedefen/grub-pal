@@ -21,11 +21,67 @@ _distro_vars_:
 #         - value: meaning
 #       guidance: {text} # < detailed parameter help
 #
+_re_specs_:
+  re_quoted_image_file:
+    re: (?i)^(''|""|['"].*\.(png|jpg|jpeg|tga|bmp)['"])?$
+    human: quoted (png/jpg/jpeg/tga/bmp) path or empty quotes
+
+  re_timeout:
+    re: ^(-1|\d+)$
+    human: number (-1 for infinite, 0 or positive integer)
+
+  re_optional_number:
+    re: ^(\d+)?$
+    human: positive number or empty
+
+  re_required_number:
+    re: ^\d+$
+    human: positive number (required)
+
+  re_default_or_saved_or_quoted:
+    re: ^(\d+|saved|".*"|'.*')$
+    human: "number, 'saved', or quoted menu entry title"
+
+  re_optional_quoted_string:
+    re: ^(".*"|'.*'|)$
+    human: quoted string or empty
+
+  re_required_quoted_string:
+    re: ^(".*"|'.*')$
+    human: quoted string (required)
+
+  re_quoted_or_command_sub:
+    re: ^(".*"|'.*'|\$\(.*\)|`.*`)$
+    human: "quoted string, $(command), or `command`"
+
+  re_initrd_images:
+    re: ^([\w\-./]+\.img(\s+[\w\-./]+\.img)*)?$
+    human: space-separated .img filenames or empty
+
+  re_theme_file:
+    re: (?i)^(''|""|.*theme\.txt)?$
+    human: path to theme.txt file or empty
+
+  re_gfxmode:
+    re: ^(auto|keep|(?:[1-9]\d{2,3}x[1-9]\d{2,3}))(?:,\s*(?:auto|keep|[1-9]\d{2,3}x[1-9]\d{2,3}))*$
+    human: "'auto', 'keep', or comma separated WxH resolutions"
+
+  re_gfxpayload:
+    re: ^(text|keep|[1-9]\d{2,3}x[1-9]\d{2,3})?$
+    human: "'text', 'keep', resolution (WxH), or empty"
+
+  re_init_tune:
+    re: ^(".*")?$
+    human: quoted beep sequence or empty
+
+  re_serial_command:
+    re: ^".*"$|^$
+    human: quoted serial configuration string or empty
 
 Boot Timeout:
   GRUB_TIMEOUT:
     default: 5
-    edit_re: ^(-1|\d+)$
+    edit_re: re_timeout
     enums:
       -1: infinite wait
       0: no wait
@@ -48,7 +104,7 @@ Boot Timeout:
 
   GRUB_HIDDEN_TIMEOUT:
     default: ''
-    edit_re: ^(\d+)?$
+    edit_re: re_optional_number
     enums:
       '': Not set (disabled).
       0: No hidden timeout - show menu immediately.
@@ -62,7 +118,7 @@ Boot Timeout:
 
   GRUB_RECORDFAIL_TIMEOUT:
     default: 30
-    edit_re: ^\d+$
+    edit_re: re_required_number
     enums:
       10: Short wait after error.
       30: Default wait after error.
@@ -74,7 +130,7 @@ Boot Timeout:
 Menu Entries:
   GRUB_DEFAULT:
     default: 0
-    edit_re: ^(\d+|saved|".*"|'.*')$
+    edit_re: re_default_or_saved_or_quoted
     enums:
       0: Boot first menu entry (usually the latest OS).
       saved: Boot previously booted OS (ensure SAVEDEFAULT is not false)
@@ -126,7 +182,7 @@ Menu Entries:
 Kernel Arguments:
   GRUB_CMDLINE_LINUX:
     default: '""'
-    edit_re: ^(".*"|'.*'|)$
+    edit_re: re_optional_quoted_string
     enums: {}
     guidance: "Kernel arguments for ALL normal/recovery boots.
       \n: Typical uses: video options, disabling specific drivers, or custom parameters.
@@ -134,7 +190,7 @@ Kernel Arguments:
 
   GRUB_CMDLINE_LINUX_DEFAULT:
     default: '"quiet splash"'
-    edit_re: ^(".*"|'.*'|)$
+    edit_re: re_optional_quoted_string
     enums:
       '"quiet splash"': Default Ubuntu/Debian setting (hides boot messages)
       '"text"': Force text mode display early in boot process
@@ -145,7 +201,7 @@ Kernel Arguments:
 
   GRUB_CMDLINE_LINUX_RECOVERY:
     default: ''
-    edit_re: ^(".*"|'.*'|)$
+    edit_re: re_optional_quoted_string
     enums: {}
     guidance: "Kernel arguments specifically for recovery mode boots.
       \n: If empty, uses GRUB_CMDLINE_LINUX.
@@ -153,7 +209,7 @@ Kernel Arguments:
 
   GRUB_EARLY_INITRD_LINUX_STOCK:
     default: ''
-    edit_re: ^([\w\-./]+\.img(\s+[\w\-./]+\.img)*)?$
+    edit_re: re_initrd_images
     enums:
       '': No early initrd (microcode updates disabled)
       'intel-ucode.img': Intel CPU microcode updates (Arch/Fedora)
@@ -168,7 +224,7 @@ Kernel Arguments:
 Visual Appearance:
   GRUB_DISTRIBUTOR:
     default: $(lsb_release -i -s)
-    edit_re: ^(".*"|'.*')$
+    edit_re: re_quoted_or_command_sub
     enums: {}
     guidance: "Sets the visible name of the operating system in the boot menu.
       \n: By default, it uses the Linux Standard Base (LSB) name (e.g., 'Ubuntu').
@@ -176,7 +232,8 @@ Visual Appearance:
 
   GRUB_BACKGROUND:
     default: ''
-    edit_re: (?i)^(''|""|.*\.(png|jpg|jpeg|tga|bmp))?$
+    # edit_re: (?i)^(''|""|.*\.(png|jpg|jpeg|tga|bmp))?$
+    edit_re: re_quoted_image_file
     enums: {}
     guidance: "Full path and filename to a background image.
       \n: Must be a JPEG or PNG file path.
@@ -185,14 +242,14 @@ Visual Appearance:
 
   GRUB_THEME:
     default: ''
-    edit_re: (?i)^(''|""|.*theme\.txt)?$
+    edit_re: re_theme_file
     enums: {}
     guidance: "Path to the theme.txt file for a custom GRUB theme.
       \n: This overrides the background image setting (GRUB_BACKGROUND)."
 
   GRUB_GFXMODE:
     default: 640x480
-    edit_re: ^(auto|keep|(?:[1-9]\d{2,3}x[1-9]\d{2,3}))(?:,\s*(?:auto|keep|[1-9]\d{2,3}x[1-9]\d{2,3}))*$
+    edit_re: re_gfxmode
     enums:
       "640x480": Most widely available monitor resolution.
       "800x600": Older standard monitor resolution.
@@ -205,7 +262,7 @@ Visual Appearance:
 
   GRUB_GFXPAYLOAD_LINUX:
     default: ''
-    edit_re: ^(text|keep|[1-9]\d{2,3}x[1-9]\d{2,3})?$ # text, keep, resolution, or empty
+    edit_re: re_gfxpayload
     enums:
       '': Use default (text mode).
       text: Force text mode for kernel boot.
@@ -230,7 +287,7 @@ Visual Appearance:
 
   GRUB_INIT_TUNE:
     default: ''
-    edit_re: ^(".*")?$
+    edit_re: re_init_tune
     enums:
       '': No beep (silent).
       '"480 440 1"': Single beep (A note).
@@ -313,7 +370,7 @@ Security & Advanced:
 
   GRUB_SERIAL_COMMAND:
     default: ''
-    edit_re: ^".*"$|^$
+    edit_re: re_serial_command
     enums: {}
     guidance: "Configuration for serial console connection.
       \n: Format: \"serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1\"
@@ -321,7 +378,7 @@ Security & Advanced:
 
   GRUB_PRELOAD_MODULES:
     default: ''
-    edit_re: ^(".*")?$
+    edit_re: re_init_tune
     enums: {}
     guidance: "Space-separated list of GRUB modules to load early.
       \n: Example: \"lvm mdraid1x\" for LVM/RAID support.
@@ -329,7 +386,7 @@ Security & Advanced:
 
   GRUB_BADRAM:
     default: ''
-    edit_re: ^(".*")?$
+    edit_re: re_init_tune
     enums: {}
     guidance: "Memory address ranges to exclude from use (faulty RAM workaround).
       \n: Format: \"0xStartAddr,0xMask,0xStartAddr,0xMask,...\"

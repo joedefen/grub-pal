@@ -1,6 +1,7 @@
 #!/usr/bin/env
 """
 """
+import re
 from importlib.resources import files
 from ruamel.yaml import YAML
 from .UserConfigDir import UserConfigDir
@@ -15,6 +16,7 @@ class CannedConfig:
     default_cfg = {  # config schema for a single parameter
         'default': '',  # usually string, can be integer
         'edit_re': EXPERT_EDIT,
+        'edit_re_human': '',  # human-readable description of regex
         'enums': {},  # key: enum name, value enum description
         'guidance': '',  # often lengthy, may have embedded newlines
     }
@@ -32,6 +34,7 @@ class CannedConfig:
         # 1. Load packaged canned_config
         resource_path = files('grub_wiz') / 'canned_config.yaml'
         self.data = yaml.load(resource_path.read_text())
+        self._process_config()
         self.using_path = resource_path
 
         config_dir = UserConfigDir.get_singleton().config_dir
@@ -49,11 +52,90 @@ class CannedConfig:
                 err =  self.validate_schema(custom_data)
                 if err is None:
                     self.data = custom_data  # Or merge if you prefer
+                    self._process_config()
                     self.using_path = custom_path
                 else:
                     print(f"WARNING: {custom_path} invalid ({err}), using canned config")
             except Exception as e:
                 print(f"WARNING: Cannot yaml.load {custom_path}: {e}")
+
+    def _process_config(self):
+        """Post-process loaded config:
+        1. Resolve regex name references to compiled patterns
+        2. Add human descriptions from _re_specs_
+        3. Substitute %ENUMS% in guidance strings
+        """
+        # Extract _re_specs_ if present
+        re_specs = self.data.get('_re_specs_', {})
+
+        # Build lookup dict: {re_name: {'pattern': compiled_re, 'human': description}}
+        regex_lookup = {}
+        for re_name, spec in re_specs.items():
+            if isinstance(spec, dict) and 're' in spec:
+                try:
+                    regex_lookup[re_name] = {
+                        'pattern': re.compile(spec['re']),
+                        'human': spec.get('human', '')
+                    }
+                except re.error as e:
+                    print(f"WARNING: Invalid regex in _re_specs_.{re_name}: {e}")
+                    regex_lookup[re_name] = {'pattern': '', 'human': spec.get('human', '')}
+
+        # Process each section and parameter
+        for section_name, params in self.data.items():
+            if section_name.startswith('_'):  # Skip special sections like _re_specs_
+                continue
+
+            if not isinstance(params, dict):
+                continue
+
+            for param_name, cfg in params.items():
+                if not isinstance(cfg, dict):
+                    continue
+
+                # Process edit_re field
+                edit_re = cfg.get('edit_re', '')
+                if edit_re:
+                    if isinstance(edit_re, str):
+                        # Check if it's a reference to _re_specs_
+                        if edit_re in regex_lookup:
+                            # Resolve to compiled pattern and add human description
+                            cfg['edit_re'] = regex_lookup[edit_re]['pattern']
+                            cfg['edit_re_human'] = regex_lookup[edit_re]['human']
+                        else:
+                            # It's an inline pattern (backward compatibility)
+                            try:
+                                cfg['edit_re'] = re.compile(edit_re)
+                                cfg['edit_re_human'] = ''
+                            except re.error as e:
+                                print(f"WARNING: Invalid inline regex for {param_name}: {e}")
+                                cfg['edit_re'] = ''
+                                cfg['edit_re_human'] = ''
+                    elif edit_re in (EXPERT_EDIT, EXPERT_EDIT[0]):
+                        # Keep EXPERT_EDIT as-is, add empty human description
+                        cfg['edit_re_human'] = ''
+                    else:
+                        # Unknown type, set empty
+                        cfg['edit_re_human'] = ''
+                else:
+                    # Empty edit_re - add empty human description
+                    cfg['edit_re_human'] = ''
+
+                # Process %ENUMS% substitution in guidance
+                guidance = cfg.get('guidance', '')
+                if guidance and '%ENUMS%' in guidance:
+                    enum_text = self._generate_enum_text(cfg.get('enums', {}))
+                    cfg['guidance'] = guidance.replace('%ENUMS%', enum_text)
+
+    def _generate_enum_text(self, enums):
+        """Generate formatted enum text for substitution"""
+        if not enums:
+            return ''
+
+        lines = []
+        for enum_val, description in enums.items():
+            lines.append(f'  {enum_val}: {description}')
+        return '\n'.join(lines)
 
     def validate_schema(self, data):
         """Validate custom config has correct structure"""

@@ -1574,12 +1574,8 @@ class GrubWiz:
             text = cfg['guidance']
             lines = text.split('\n')
             for line in lines:
-                wrapped = ''
-                if line.strip() == '%ENUMS%':
-                    wraps += gen_enum_lines()
-                else:
-                    wrapped = textwrap.fill(line, width=wid-1, subsequent_indent=' '*5)
-                    wraps += wrapped.split('\n')
+                wrapped = textwrap.fill(line, width=wid-1, subsequent_indent=' '*5)
+                wraps += wrapped.split('\n')
         elif self.spins.guide == 'Enums':
             wraps += gen_enum_lines()
         emits = [f'{lead}{wrap}' for wrap in wraps if wrap]
@@ -1599,11 +1595,21 @@ class GrubWiz:
 
         value = self.param_values[name]
         valid = False
-        hint, pure_regex = '', ''
-        if regex:
-            pure_regex = regex.encode().decode('unicode_escape')
-            hint += f'  pat={pure_regex}'
-        hint = hint[2:]
+        hint = ''
+
+        # Get human description from config
+        cfg = self.param_cfg.get(name, {})
+        human_desc = cfg.get('edit_re_human', '')
+
+        if human_desc:
+            hint = human_desc
+        elif regex:
+            # Fallback to regex pattern if no human description
+            if hasattr(regex, 'pattern'):
+                pure_regex = regex.pattern
+            else:
+                pure_regex = str(regex).encode().decode('unicode_escape')
+            hint = f'pat={pure_regex}'
 
         while not valid:
             prompt = f'Edit {name} [{hint}]'
@@ -1614,10 +1620,26 @@ class GrubWiz:
             valid = True # until proven otherwise
 
             # First check regex if provided
-            if regex and not re.match(regex, str(value)):
-                valid, hint = False, f'must match: {pure_regex}'
-                win.flash('Invalid input - please try again', duration=1.5)
-                continue
+            if regex:
+                # Handle both compiled patterns and string patterns
+                if hasattr(regex, 'match'):
+                    match_result = regex.match(str(value))
+                else:
+                    match_result = re.match(regex, str(value))
+
+                if not match_result:
+                    valid = False
+                    # Use human description in error message
+                    if human_desc:
+                        hint = f'must be: {human_desc}'
+                    else:
+                        if hasattr(regex, 'pattern'):
+                            pure_regex = regex.pattern
+                        else:
+                            pure_regex = str(regex).encode().decode('unicode_escape')
+                        hint = f'must match: {pure_regex}'
+                    win.flash('Invalid input - please try again', duration=1.5)
+                    continue
 
             # Also validate as shell token for safety (regexes can be permissive)
             if value and not self._is_valid_shell_token(value):
@@ -1666,6 +1688,18 @@ class GrubWiz:
             # Replace escaped quotes, then check for any remaining unescaped quotes
             check = inner.replace('\\"', '')
             return '"' not in check
+
+        # Command substitution: $(...)
+        if value.startswith('$(') and value.endswith(')'):
+            # Basic check: has opening and closing parens
+            # We don't deeply validate the command itself
+            return True
+
+        # Command substitution: `...` (backtick style)
+        if value.startswith('`') and value.endswith('`') and len(value) >= 2:
+            # Allow backtick command substitution
+            # The shell will handle the validation
+            return True
 
         # Unquoted word: only allow alphanumeric, underscore, hyphen, period
         # Anything fancier (paths, spaces, special chars) must be quoted
