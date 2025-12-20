@@ -36,7 +36,7 @@
   * From terminal: Run `grub-wiz --help` to see command-line options
 
 >⚠️ **Distro-Specific Caveats**: Linux distributions often layer their opinions atop of the standard GRUB configuration. While `grub-wiz` ensures your `/etc/default/grub` is valid and safe, distros may ignore your settings (e.g., in pursuit of "Hidden Menu" or "Flicker-free" features).
->* **Fedora Users**: Fedora uses an environment block (`grubenv`) that can override your timeout settings. If your menu is still hidden after using `grub-wiz`, you may need to run: `sudo grub2-editenv - unset menu_auto_hidea`
+>* **Fedora Users**: Fedora uses an environment block (`grubenv`) that can override your timeout settings. If your menu is still hidden after using `grub-wiz`, you may need to run: `sudo grub2-editenv - unset menu_auto_hide`
 >* **General Tip**: If your changes are ineffective, check if your distro uses specialized tools like `grub2-editenv`, `systemd-boot`, or has specific "fast-boot" logic enabled in the BIOS/UEFI.
 ---
 #### How to Use grub-wiz
