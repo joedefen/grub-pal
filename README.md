@@ -64,18 +64,23 @@ NOTES:
 ##### REVIEW SCREEN AND WRINTING/UPDATING GRUB
 The next step in updating the `grub` configuration is the REVIEW screen:
 ```
- REVIEW  [g]uide=Off [w]rite-grub     ESC:back ?:help [q]uit  𝚫=3
-                              [e]dit [u]ndo
-──────────────────────────────────────────────────────────────────────────────────
-   RECORDFAIL_TIMEOUT······  200
-              └──────── was  2
-                └───      *  over 120s seems ill advised
->  CMDLINE_LINUX···········  "splash"                                             
-              └──────── was  ""
-                └───    ***  "splash" belongs only in CMDLINE_LINUX_DEFAULT
-   CMDLINE_LINUX_DEFAULT···  ""
-   DISTRIBUTOR·············  'Kubuntu My Love'
-              └──────── was  'Kubuntu'
+ REVIEW  [g]uide=Off  [w]rite-grub    ESC:back ?:help [q]uit  𝚫=4
+                               ⮜–⮞ [e]dit x:deact [u]ndo
+───────────────────────────────────────────────────────────────────────────────────────
+   TIMEOUT···················  0
+                  └───   🟌🟌🟌🟌  when 0, TIMEOUT_STYLE cannot be "hidden"
+   TIMEOUT_STYLE·············  hidden
+                  └───   🟌🟌🟌🟌  when "hidden", TIMEOUT cannot be 0
+   RECORDFAIL_TIMEOUT········  200
+                └──────── was  ≡
+                  └───      🟌  over 120s seems ill advised
+   CMDLINE_LINUX·············  "splash"
+                └──────── was  ""
+                  └───    🟌🟌🟌  splash/quiet/rhgb belong only in CMDLINE_LINUX_DEFAULT
+>  CMDLINE_LINUX_DEFAULT·····  ""                                                      
+                └──────── was  "quiet splash"
+   DISTRIBUTOR···············  'Kubuntu'
+                └──────── was  `lsb_release -i -s 2> /dev/null || echo Debian`
 ```
 NOTES:
 * The review screen shows parameters that you have changed and parameters that have warnings.

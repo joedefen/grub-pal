@@ -1,3 +1,17 @@
+_distro_vars_:
+  grub_cfg:
+    - /boot/grub/grub.cfg        # Priority 1 (Arch/Debian)
+    - /boot/grub2/grub.cfg       # Priority 2 (Fedora/SUSE)
+    - /boot/efi/EFI/fedora/grub.cfg
+  
+  update_grub:
+    - grub-mkconfig
+    - grub2-mkconfig
+    - update-grub
+
+  etc_grub:
+    - /etc/default/grub
+
 #   ----- SCHEMA -----
 #   {section-name}:
 #     {parameter-name}:
@@ -7,6 +21,7 @@
 #         - value: meaning
 #       guidance: {text} # < detailed parameter help
 #
+
 Boot Timeout:
   GRUB_TIMEOUT:
     default: 5
