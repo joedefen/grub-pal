@@ -1574,8 +1574,11 @@ class GrubWiz:
             text = cfg['guidance']
             lines = text.split('\n')
             for line in lines:
-                wrapped = textwrap.fill(line, width=wid-1, subsequent_indent=' '*5)
-                wraps += wrapped.split('\n')
+                if line.strip() == '%ENUMS%':
+                    wraps += gen_enum_lines()
+                else:
+                    wrapped = textwrap.fill(line, width=wid-1, subsequent_indent=' '*5)
+                    wraps += wrapped.split('\n')
         elif self.spins.guide == 'Enums':
             wraps += gen_enum_lines()
         emits = [f'{lead}{wrap}' for wrap in wraps if wrap]

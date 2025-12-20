@@ -121,21 +121,8 @@ class CannedConfig:
                     # Empty edit_re - add empty human description
                     cfg['edit_re_human'] = ''
 
-                # Process %ENUMS% substitution in guidance
-                guidance = cfg.get('guidance', '')
-                if guidance and '%ENUMS%' in guidance:
-                    enum_text = self._generate_enum_text(cfg.get('enums', {}))
-                    cfg['guidance'] = guidance.replace('%ENUMS%', enum_text)
-
-    def _generate_enum_text(self, enums):
-        """Generate formatted enum text for substitution"""
-        if not enums:
-            return ''
-
-        lines = []
-        for enum_val, description in enums.items():
-            lines.append(f'  {enum_val}: {description}')
-        return '\n'.join(lines)
+                # Note: We don't pre-expand %ENUMS% here because it needs to be
+                # dynamic to show the current value marker in the UI
 
     def validate_schema(self, data):
         """Validate custom config has correct structure"""
