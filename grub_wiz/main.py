@@ -20,7 +20,7 @@ import curses as cs
 from argparse import ArgumentParser
 from types import SimpleNamespace
 from typing import Any #, Tuple #, Opt
-from console_window import OptionSpinner, ConsoleWindow, ConsoleWindowOpts
+from .ConsoleWindow import OptionSpinner, ConsoleWindow, ConsoleWindowOpts, Screen, ScreenStack, Context
 from .CannedConfig import CannedConfig, EXPERT_EDIT
 from .DistroVars import DistroVars
 from .GrubFile import GrubFile
@@ -57,229 +57,28 @@ class Tab:
         self.rwid = self.rz - self.ra
         self.wid = self.rz - self.la
 
-class ScreenStack:
-    """ TBD """
-    def __init__(self, win: ConsoleWindow , spins_obj: object, screens: tuple, screen_objects: dict = None):
-        self.win = win
-        self.obj = spins_obj
-        self.screens = screens
-        self.screen_objects = screen_objects or {}  # Dict of screen_num -> Screen instance
-        self.stack = []
-        self.curr = None
-        self.push(HOME_ST, 0)
 
-    def push(self, screen, prev_pos, force=False):
-        """
-        Push a new screen onto the stack with validation and loop prevention.
-
-        Args:
-            screen: Screen number to push
-            prev_pos: Previous cursor position
-            force: Skip validation hooks if True
-
-        Returns:
-            Previous position if successful, None if blocked by validation
-        """
-        # Loop prevention: Check if screen is already on the stack
-        if not force and self.curr and screen == self.curr.num:
-            # Trying to push the current screen again - ignore
-            return None
-
-        # Check if screen is already in the stack (deeper loop)
-        if not force:
-            for stacked_screen in self.stack:
-                if stacked_screen.num == screen:
-                    # Would create a loop - block it
-                    return None
-
-        from_screen_num = self.curr.num if self.curr else None
-        new_screen_obj = self.screen_objects.get(screen) if self.screen_objects else None
-
-        # Check navigation constraints
-        if not force and new_screen_obj:
-            # Check if screen is terminal (cannot be pushed)
-            if new_screen_obj.is_terminal:
-                return None
-
-            # Check come_from whitelist
-            if new_screen_obj.come_from_whitelist is not None:
-                if from_screen_num not in new_screen_obj.come_from_whitelist:
-                    # Navigation from this screen not allowed
-                    return None
-
-        # Call on_pause() on current screen (it's being covered)
-        if not force and self.curr and self.screen_objects:
-            current_screen_obj = self.screen_objects.get(from_screen_num)
-            if current_screen_obj:
-                if not current_screen_obj.on_pause():
-                    # Current screen rejected being paused
-                    return None
-
-        # Navigation approved - proceed
-        if self.curr:
-            self.curr.pick_pos = self.win.pick_pos
-            self.curr.scroll_pos = self.win.scroll_pos
-            self.curr.prev_pos = prev_pos
-            self.stack.append(self.curr)
-        self.curr = SimpleNamespace(num=screen,
-                  name=self.screens[screen], pick_pos=-1,
-                                scroll_pos=-1, prev_pos=-1)
-        self.win.pick_pos = self.win.scroll_pos = 0
-        return 0
-
-    def pop(self, force=False):
-        """
-        Pop the top screen from the stack.
-        on_pop() is always called for cleanup (cannot be rejected).
-        on_resume() is called on the screen being returned to (typically always succeeds).
-
-        Args:
-            force: Skip validation hooks if True
-
-        Returns:
-            Previous position if successful, None if stack is empty
-        """
-        if not self.stack:
-            return None
-
-        to_screen_num = self.stack[-1].num
-        from_screen_num = self.curr.num if self.curr else None
-
-        # Call on_pop() on current screen (it's being removed - always succeeds)
-        if not force and self.curr and self.screen_objects:
-            current_screen_obj = self.screen_objects.get(from_screen_num)
-            if current_screen_obj:
-                current_screen_obj.on_pop()  # Always called, cannot reject
-
-        # Call on_resume() on the screen we're returning to
-        if not force and self.screen_objects:
-            prev_screen_obj = self.screen_objects.get(to_screen_num)
-            if prev_screen_obj:
-                if not prev_screen_obj.on_resume():
-                    # Previous screen rejected resuming (rare, but allowed)
-                    return None
-
-        # Navigation approved - proceed
-        self.curr = self.stack.pop()
-        self.win.pick_pos = self.curr.pick_pos
-        self.win.scroll_pos = self.curr.scroll_pos
-        return self.curr.prev_pos
-
-    def is_curr(self, screens):
-        """TBD"""
-        def test_one(screen):
-            if isinstance(screen, int):
-                return screen == self.curr.num
-            return str(screen) == self.curr.name
-        if isinstance(screens, (tuple, list)):
-            for screen in screens:
-                if test_one(screen):
-                    return True
-            return False
-        return test_one(screen=screens)
-
-    def act_in(self, action, screens= None):
-        """ TBD """
-        val =  getattr(self.obj, action)
-        setattr(self.obj, action, False)
-        return val and (screens is None or self.is_curr(screens))
+# Note: Clue class has been replaced with Context from ConsoleWindow
+# Context usage patterns:
+#   Context(genre='DECOR') - non-pickable decorative lines (headers, separators)
+#   Context(genre='param', param_name=...) - pickable parameter lines
+#   Context(genre='TRANSIENT') - dropdown/conditional content (auto-visible with parent)
+#   Context(genre='warn', warn_key=...) - pickable warning lines
 
 
-class Clue:
+# Extend Screen from ConsoleWindow to add grub-wiz specific behavior
+class GrubWizScreen(Screen):
     """
-    A semi-formal object that enforces fixed required fields (cat, ident)
-    and accepts arbitrary keyword arguments.
+    Grub-wiz specific Screen base class.
+    Extends ConsoleWindow.Screen with backward-compatible 'gw' attribute.
     """
-    def __init__(self, cat: str, ident: str='', group_cnt=1, **kwargs: Any):
-        """
-        Initializes the Clue object.
-
-        :param cat: The required fixed cat (e.g., 'param', 'warn').
-        # :param context: A required fixed field providing context.
-        :param kwargs: Arbitrary optional fields (e.g., var1='foo', var2='bar').
-        """
-        # 1. Rigorous Fixed Field Assignment (Validation)
-        # Ensure the fixed fields are not empty/invalid if needed
-        if not cat:
-            raise ValueError("The 'cat' field is required and cannot be empty.")
-        # if not ident:
-             # raise ValueError("The 'ident' field is required and cannot be empty.")
-
-        self.cat = cat
-        self.ident = ident
-        # self.keys = keys
-        self.group_cnt = group_cnt
-
-        # 2. Forgiving Variable Field Assignment
-        # Iterate over the arbitrary keyword arguments (kwargs)
-        # and assign them directly as attributes to the instance.
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
-    def __repr__(self):
-        # A helpful representation similar to SimpleNamespace
-        attrs = [f"{k}={v!r}" for k, v in self.__dict__.items()]
-        return f"Clue({', '.join(attrs)})"
-
-class Screen:
-    """Base class for all screen types"""
-    # Navigation control (class attributes - override in subclasses)
-    come_from_whitelist = None  # None = can come from any screen, else list of screen numbers
-    is_terminal = False         # True = cannot be pushed onto stack
-    cannot_stack_me = False     # True = cannot have other screens pushed on top
-
     def __init__(self, grub_wiz):
         """
-        Constructor serves as initial entry point for screen.
-        Called once when screen is first created.
+        Initialize screen with grub_wiz instance.
+        Sets both self.app (from parent) and self.gw (for backward compatibility).
         """
-        self.gw = grub_wiz  # Reference to main GrubWiz instance
-        self.win = grub_wiz.win
-
-    def draw_screen(self):
-        """Draw screen-specific lines (header and body)"""
-
-    def on_pause(self):
-        """
-        Called when another screen is about to be pushed on top of this one.
-
-        Returns:
-            True to allow being paused/covered, False to reject
-        """
-        return not self.cannot_stack_me
-
-    def on_resume(self):
-        """
-        Called when this screen becomes the top screen again
-        (after a screen that was on top of it was popped).
-
-        Returns:
-            True to allow resuming (typically always True)
-        """
-        return True
-
-    def on_pop(self):
-        """
-        Called when this screen is being permanently removed from the stack.
-        Must always succeed - use for cleanup only.
-
-        Returns:
-            Always returns True (cleanup cannot be rejected)
-        """
-        return True
-
-    def handle_action(self, action_name):
-        """
-        Dispatch action to screen-specific handler method.
-        Looks for method named '{action_name}_action' and calls it if exists.
-        Returns True if action was handled, False otherwise.
-        """
-        method_name = f'{action_name}_ACTION'
-        method = getattr(self, method_name, None)
-        if method and callable(method):
-            method()
-            return True
-        return False
+        super().__init__(grub_wiz)
+        self.gw = self.app  # Backward compatibility: gw is an alias for app
 
     def slash_PROMPT(self, current: str):
         """ TBD """
@@ -303,8 +102,27 @@ class Screen:
                 hint = str(whynot)
                 continue
 
+    # App-level navigation actions (available on all screens)
+    def escape_ACTION(self):
+        """Handle ESC key - navigate back if possible"""
+        if self.gw.ss.stack:
+            self.gw.navigate_back()
 
-class HomeScreen(Screen):
+    def help_mode_ACTION(self):
+        """Handle ? key - navigate to help screen"""
+        self.gw.navigate_to(HELP_ST)
+
+    def enter_restore_ACTION(self):
+        """Handle R key - navigate to restore screen (only from HOME/REVIEW)"""
+        if self.gw.ss.is_curr((HOME_ST, REVIEW_ST)):
+            self.gw.navigate_to(RESTORE_ST)
+
+    def enter_warnings_ACTION(self):
+        """Handle W key - navigate to warnings screen"""
+        self.gw.navigate_to(WARN_ST)
+
+
+class HomeScreen(GrubWizScreen):
     """HOME screen - parameter editing"""
     # Home screen has no restrictions - can navigate anywhere
     def __init__(self, gw):
@@ -382,7 +200,6 @@ class HomeScreen(Screen):
                         visible_params.append(param_name)
                 else:
                     visible_params.append(param_name)
-
 
             # Skip empty sections when in compact mode (hiding params)
             if not visible_params: # and not gw.show_hidden_params:
@@ -743,7 +560,7 @@ class ReviewScreen(HomeScreen):
         return # does nothing here
 
 
-class RestoreScreen(Screen):
+class RestoreScreen(GrubWizScreen):
     """RESTORE screen - backup management"""
     # Can be accessed from HOME or REVIEW screens
     come_from_whitelist = [HOME_ST, REVIEW_ST]
@@ -886,7 +703,7 @@ class RestoreScreen(Screen):
             except Exception as ex:
                 self.win.alert(f'ERR: cannot slurp {gw.bak_path} [{ex}]')
 
-class CompareScreen(Screen):
+class CompareScreen(GrubWizScreen):
     """  Show the comparison of two backup files """
     come_from_whitelist = [RESTORE_ST]
 
@@ -991,7 +808,7 @@ class CompareScreen(Screen):
         win.add_header(f'> {self.bak2.name} [#lines={self.cnt2}]')
 
 
-class ViewScreen(Screen):
+class ViewScreen(GrubWizScreen):
     """VIEW screen - view backup contents"""
     # Can only be accessed from RESTORE screen
     come_from_whitelist = [RESTORE_ST]
@@ -1026,7 +843,7 @@ class ViewScreen(Screen):
                 self.win.add_body(f'{' ':>6}{line[:wid]}')
                 line = line[wid:]
 
-class WarnScreen(Screen):
+class WarnScreen(GrubWizScreen):
     """WARNINGS Screen"""
     # Can only be accessed from REVIEW screen
     come_from_whitelist = [HOME_ST, REVIEW_ST]
@@ -1122,7 +939,7 @@ class WarnScreen(Screen):
         """ TBD """
         self.search, self.regex = self.slash_PROMPT(self.search)
 
-class HelpScreen(Screen):
+class HelpScreen(GrubWizScreen):
     """HELP screen"""
     def draw_screen(self):
         """ TBD """
@@ -1251,40 +1068,40 @@ class GrubWiz:
         """TBD """
         spinner = self.spinner = OptionSpinner()
         self.spins = self.spinner.default_obj
-        spinner.add_key('escape', 'ESC - back to prev screen', category="action", keys=[27,])
-        spinner.add_key('help_mode', '? - enter help screen', category='action')
+        spinner.add_key('escape', 'ESC - back to prev screen', genre="action", keys=[27,])
+        spinner.add_key('help_mode', '? - enter help screen', genre='action')
         spinner.add_key('verbose_header', 'm - more keys shown', vals=[False, True])
-        spinner.add_key('quit', 'q,ctl-c - quit the app', category='action', keys={0x3, ord('q')})
+        spinner.add_key('quit', 'q,ctl-c - quit the app', genre='action', keys={0x3, ord('q')})
 
         spinner.add_key('cycle_next', '=>,SP - next cycle value',
-                        category='action', keys=[cs.KEY_RIGHT, ord(' ')])
+                        genre='action', keys=[cs.KEY_RIGHT, ord(' ')])
         spinner.add_key('cycle_prev', '<=,BS - prev cycle value',
-                        category='action', keys=[ord('C'), cs.KEY_LEFT, cs.KEY_BACKSPACE])
-        spinner.add_key('edit', 'e - edit value', category='action')
-        spinner.add_key('expert_edit', 'E - expert edit (minimal validation)', category='action',
+                        genre='action', keys=[ord('C'), cs.KEY_LEFT, cs.KEY_BACKSPACE])
+        spinner.add_key('edit', 'e - edit value', genre='action')
+        spinner.add_key('expert_edit', 'E - expert edit (minimal validation)', genre='action',
                             keys=[ord('E')])
-        spinner.add_key('undo', 'u - revert value', category='action')
+        spinner.add_key('undo', 'u - revert value', genre='action')
 
-        spinner.add_key('hide', 'x - inh/allow warnings', category='action')
-        spinner.add_key('show_hidden', 's - show/hide inactive params', category='action')
-        spinner.add_key('write', 'w - write params and run "grub-update"', category='action')
+        spinner.add_key('hide', 'x - inh/allow warnings', genre='action')
+        spinner.add_key('show_hidden', 's - show/hide inactive params', genre='action')
+        spinner.add_key('write', 'w - write params and run "grub-update"', genre='action')
 
         spinner.add_key('guide', 'g - guidance level', vals=['Off', 'Enums', "Full"])
         spinner.add_key('fancy_headers', 'f - cycle fancy headers (Off/Underline/Reverse)',
                         vals=['Underline', 'Reverse', 'Off'])
 
 
-        spinner.add_key('enter_restore', 'R - enter restore screen', category='action')
-        spinner.add_key('enter_warnings', 'W - enter WARNINGs screen', category='action')
+        spinner.add_key('enter_restore', 'R - enter restore screen', genre='action')
+        spinner.add_key('enter_warnings', 'W - enter WARNINGs screen', genre='action')
 
-        spinner.add_key('restore', 'r - restore selected backup [in restore screen]', category='action')
-        spinner.add_key('delete', 'd - delete selected backup [in restore screen]', category='action')
-        spinner.add_key('tag', 't - tag/retag a backup file [in restore screen]', category='action')
-        spinner.add_key('view', 'v - view a backup file [in restore screen]', category='action')
-        spinner.add_key('baseline', 'b - set CMP baseline [in restore screen]', category='action')
-        spinner.add_key('compare', 'c - compare with baseline [in restore screen]', category='action')
+        spinner.add_key('restore', 'r - restore selected backup [in restore screen]', genre='action')
+        spinner.add_key('delete', 'd - delete selected backup [in restore screen]', genre='action')
+        spinner.add_key('tag', 't - tag/retag a backup file [in restore screen]', genre='action')
+        spinner.add_key('view', 'v - view a backup file [in restore screen]', genre='action')
+        spinner.add_key('baseline', 'b - set CMP baseline [in restore screen]', genre='action')
+        spinner.add_key('compare', 'c - compare with baseline [in restore screen]', genre='action')
 
-        spinner.add_key('slash', '/ - filter pattern [in WARNINGS screen]', category='action')
+        spinner.add_key('slash', '/ - filter pattern [in WARNINGS screen]', genre='action')
 
 
 
@@ -1370,98 +1187,11 @@ class GrubWiz:
 
     def add_fancy_header(self, line):
         """
-        Parses header line and adds it with fancy formatting if enabled.
-        Modes: 'Off' (normal), 'Underline' (underlined keys), 'Reverse' (reverse video keys)
-        Converts [x]text to formatted x (brackets removed) when mode is on.
-        Also handles x:text patterns by formatting x.
-        If first word is all-caps, makes it BOLD.
+        Wrapper that calls ConsoleWindow.add_fancy_header() with the current mode.
+        Gets the mode from self.spins.fancy_headers and delegates to the window.
         """
-
         mode = self.spins.fancy_headers
-        if mode == 'Off':
-            # Fancy mode off, just add the line normally
-            self.win.add_header(line)
-            return
-
-        # Choose the attribute based on mode
-        key_attr = (cs.A_UNDERLINE|cs.A_BOLD) if mode == 'Underline' else cs.A_REVERSE
-
-        # Pattern to match [x]text or x:text (single letter before colon)
-        # We'll process the line character by character to handle both patterns
-        result_sections = []  # List of (text, attr) tuples
-        i = 0
-        current_text = ""
-
-        # Check if line starts with all-caps word and extract it
-        stripped = line.lstrip()
-        if stripped:
-            first_word_match = stripped.split()[0] if stripped.split() else ''
-            if first_word_match and re.match(r'^[\w-]+$', first_word_match):
-                # Add leading whitespace
-                leading_space = line[:len(line) - len(stripped)]
-                if leading_space:
-                    result_sections.append((leading_space, None))
-                # Add the all-caps word in BOLD
-                result_sections.append((first_word_match, cs.A_BOLD))
-                # Skip past it in our processing
-                i = len(leading_space) + len(first_word_match)
-
-        while i < len(line):
-            # Check for [x]text pattern
-            if line[i] == '[' and i + 2 < len(line) and line[i + 2] == ']':
-                # Save any accumulated normal text
-                if current_text:
-                    result_sections.append((current_text, None))
-                    current_text = ""
-
-                # Extract the key letter and add it with chosen attribute
-                key_char = line[i + 1]
-                result_sections.append((key_char, key_attr))
-                i += 3  # Skip past [x]
-
-            # Check for multi-character key names like ESC:, ENTER:, TAB:
-            elif (i == 0 or line[i - 1] == ' '):
-                # Look ahead for uppercase word followed by colon
-                match = re.match(r'([A-Z]{2,}|[A-Z]):', line[i:])
-                if match:
-                    # Found a key name followed by colon
-                    if current_text:
-                        result_sections.append((current_text, None))
-                        current_text = ""
-
-                    key_name = match.group(1)
-                    result_sections.append((key_name, key_attr))
-                    result_sections.append((':', None))  # Add the colon without formatting
-                    i += len(key_name) + 1  # Skip past key and colon
-                else:
-                    match = re.match(r'/(\S+)', line[i:])
-                    if match:
-                        # Found a search pattern
-                        if current_text:
-                            result_sections.append((current_text, None))
-                            current_text = ""
-
-                        full_pattern = match.group(0)  # includes the /
-                        result_sections.append((full_pattern, cs.A_BOLD|cs.A_REVERSE))
-                        i += len(full_pattern)
-                    else:
-                        # Not a key pattern, just regular character
-                        current_text += line[i]
-                        i += 1
-
-            else:
-                # Regular character
-                current_text += line[i]
-                i += 1
-
-        # Add any remaining text
-        if current_text:
-            result_sections.append((current_text, None))
-
-        # Now output the sections using add_header with resume
-        for idx, (text, attr) in enumerate(result_sections):
-            resume = bool(idx > 0)  # Resume for all but the first section
-            self.win.add_header(text, attr=attr, resume=resume)
+        self.win.add_fancy_header(line, mode=mode)
 
 
 
@@ -1941,6 +1671,8 @@ class GrubWiz:
 
             if key is not None:
                 self.spinner.do_key(key, win)
+
+                # Handle app-level quit action
                 if spins.quit:
                     spins.quit = False
                     if self.ss.is_curr(RESTORE_ST):
@@ -1948,32 +1680,11 @@ class GrubWiz:
                     else:
                         break
 
-                # Handle escape with new generic handler
-                if self.ss.act_in('escape'):
-                    self.handle_escape()
-
-                # Handle help mode navigation
-                if self.ss.act_in('help_mode'):
-                    self.navigate_to(HELP_ST)
-
-                # Actions delegated to screen classes
-                screen_actions = [
-                    'cycle_next', 'cycle_prev', 'undo', 'show_hidden', 'edit',
-                    'expert_edit', 'hide', 'write', 'restore', 'delete', 'tag',
-                    'view', 'slash', 'baseline', 'compare',
-                ]
-                current_screen = self.screens[self.ss.curr.num]
-                for action in screen_actions:
-                    if self.ss.act_in(action):
-                        current_screen.handle_action(action)
-
-                # Handle navigation to restore screen
-                if self.ss.act_in('enter_restore', (HOME_ST, REVIEW_ST)):
-                    self.navigate_to(RESTORE_ST)
-
-                # Handle navigation to warnings screen
-                if self.ss.act_in('enter_warnings'):
-                    self.navigate_to(WARN_ST)
+                # Use perform_actions() to automatically handle all screen-specific actions
+                # This replaces the manual action list and handles: cycle_next, cycle_prev,
+                # undo, show_hidden, edit, expert_edit, hide, write, restore, delete, tag,
+                # view, slash, baseline, compare, escape, help_mode, enter_restore, enter_warnings
+                self.ss.perform_actions(self.spinner)
 
             win.clear()
 
