@@ -20,7 +20,7 @@ import curses as cs
 from argparse import ArgumentParser
 from types import SimpleNamespace
 from typing import Any #, Tuple #, Opt
-from .ConsoleWindow import OptionSpinner, ConsoleWindow, ConsoleWindowOpts, Screen, ScreenStack, Context
+from console_window import OptionSpinner, ConsoleWindow, ConsoleWindowOpts, Screen, ScreenStack, Context, IncrementalSearchBar
 from .CannedConfig import CannedConfig, EXPERT_EDIT
 from .DistroVars import DistroVars
 from .GrubFile import GrubFile
@@ -177,7 +177,6 @@ class HomeScreen(GrubWizScreen):
         win = self.win # short hand
         picked = win.pick_pos
         found_current = False
-        gw.clues = []
         first_visible_section = True
 
         # Iterate through sections directly, hiding empty ones
@@ -207,26 +206,22 @@ class HomeScreen(GrubWizScreen):
 
             # Add blank line before sections (except first visible section)
             if not first_visible_section:
-                win.add_body(' ')
-                gw.clues.append(Clue('nop'))
+                win.add_body(' ', context=Context(genre='DECOR'))
             first_visible_section = False
 
-            # Add section header
-            win.add_body(f'[{section_name}]')
-            gw.clues.append(Clue('nop'))
+            # Add section header - DECOR genre makes it non-pickable
+            win.add_body(f'[{section_name}]', context=Context(genre='DECOR'))
 
             # Add visible params
             for param_name in visible_params:
-                pos = len(gw.clues)
-                is_current = bool(picked == pos)
+                is_current = bool(picked == win.body.row_cnt)
                 param_lines = self.body_param_lines(param_name, is_current)
 
-                if pos != picked:
+                if not is_current:
                     line = param_lines[0]
                     if len(param_lines) > 1:
                         line = line[:win.cols-2] + '⯈'
-                    win.add_body(line)
-                    gw.clues.append(Clue('param', param_name))
+                    win.add_body(line, context=Context(genre='param', param_name=param_name))
                     continue
 
                 found_current = True
@@ -241,9 +236,11 @@ class HomeScreen(GrubWizScreen):
                 if len(emits) > 1:
                     emits = [emits[0]] + self.left_side_box(emits[1:])
 
-                for emit in emits:
-                    win.add_body(emit)
-                gw.clues.append(Clue('param', param_name, len(emits)))
+                # Add parent param line
+                win.add_body(emits[0], context=Context(genre='param', param_name=param_name))
+                # Add TRANSIENT dropdown lines (auto-visible with parent via ConsoleWindow)
+                for emit in emits[1:]:
+                    win.add_body(emit, context=Context(genre='TRANSIENT'))
 
         return found_current
 
@@ -281,9 +278,9 @@ class HomeScreen(GrubWizScreen):
 
         tab = self.get_tab()
         picked = gw.win.pick_pos
-        if 0 <= picked < len(gw.clues):
-            clue = gw.clues[picked]
-            cat, ident = clue.cat, clue.ident
+        ctx = gw.win.get_picked_context()
+        if ctx:
+            cat, ident = ctx.genre, getattr(ctx, 'param_name', '')
         else:
             cat, ident = '', ''
 
@@ -306,7 +303,8 @@ class HomeScreen(GrubWizScreen):
 
         if not review_screen and gw.show_hidden_params:
             middle = f'{middle:<15}' ## so search does not move too much
-            middle += f'  /{self.search}'
+            # Show search bar (with cursor if active, or just text if not)
+            middle += gw.home_search_bar.get_display_string(prefix='  /')
 
         gw.add_fancy_header(f'{left:<{tab.lwid}}  {middle}')
 
@@ -330,7 +328,7 @@ class HomeScreen(GrubWizScreen):
         header = f'{header:<{tab.lwid}}'
 
         self.add_common_head2(header)
-        gw.ensure_visible_group()
+        # Note: ensure_visible_group() removed - Context TRANSIENT handles this automatically
 
     def hide_ACTION(self):
         """Handle 'x' key on HOME screen - toggle param activation"""
@@ -386,9 +384,10 @@ class HomeScreen(GrubWizScreen):
             gw.clues = []
 
     def slash_ACTION(self):
-        """ TBD"""
+        """Start incremental search mode for parameter filtering"""
         if self.gw.show_hidden_params:
-            self.search, self.regex = self.slash_PROMPT(self.search)
+            self.gw.home_search_bar.start(self.search)
+            self.gw.win.passthrough_mode = True
 
 class ReviewScreen(HomeScreen):
     """REVIEW screen - show diffs and warnings"""
@@ -416,8 +415,7 @@ class ReviewScreen(HomeScreen):
 
     def add_head(self):
         """ Construct the review screen header
-            Presumes the body was created and self.clues[]
-            is populated.
+            Presumes the body was created with Context metadata.
         """
         gw = self.gw
         self.add_common_head1('REVIEW')
@@ -429,7 +427,7 @@ class ReviewScreen(HomeScreen):
             header += f' {cnt} ✘-warns'
         header = f'{header:<24}'
         self.add_common_head2(header)
-        gw.ensure_visible_group()
+        # Note: ensure_visible_group() removed - Context TRANSIENT handles this automatically
 
     def add_body(self):
         """ TBD """
@@ -478,27 +476,23 @@ class ReviewScreen(HomeScreen):
             if heys:
                 item.heys += heys
 
-        gw.clues = []
         picked = self.win.pick_pos
 
         for param_name, ns in reviews.items():
-            clue_idx = len(gw.clues)
-            param_pos = pos = len(gw.clues)
-#           keys, indent = [], 30
             tab = self.get_tab()
-            is_current = bool(pos==picked)
+            is_current = bool(self.win.body.row_cnt == picked)
             param_lines = self.body_param_lines(param_name, is_current)
-            gw.clues.append(Clue('param', param_name))
+
+            # Add param lines with Context
             for line in param_lines:
-                self.win.add_body(line)
-            pos += len(param_lines)
+                self.win.add_body(line, context=Context(genre='param', param_name=param_name))
 
             changed = bool(ns.old_value is not None
                            and str(ns.value) != str(ns.old_value))
             if changed:
-                pos += 1
-                self.win.add_body(f'{"└──────── was":>{tab.lwid}}  {ns.old_value}')
-                gw.clues.append(Clue('nop'))
+                # TRANSIENT line showing old value
+                self.win.add_body(f'{"└──────── was":>{tab.lwid}}  {ns.old_value}',
+                                context=Context(genre='TRANSIENT'))
 
             for hey in ns.heys:
                 warn_key = WarnDB.make_key(param_name, hey[1])
@@ -510,32 +504,34 @@ class ReviewScreen(HomeScreen):
                     mark = '✘' if is_inhibit else ' '
                     sub_text = f'└─── {mark} {stars:>4}'
                     line = f'{sub_text:>{tab.lwid}}  {hey[1]}'
-                    cnt = gw.add_wrapped_body_line(line,
-                                        tab.lwid+2, pos==picked)
-                    gw.clues.append(Clue('warn', warn_key, cnt))
-                    pos += cnt
-            gw.clues[clue_idx].group_cnt = pos - param_pos
+                    # Add warning line with Context - TRANSIENT keeps it with parent
+                    cnt = gw.add_wrapped_body_line(line, tab.lwid+2,
+                                                  self.win.body.row_cnt==picked,
+                                                  context=Context(genre='warn', warn_key=warn_key))
 
             if is_current:
                 emits = gw.drop_down_lines(param_name)
                 if len(emits) > 1:
                     emits = self.left_side_box(emits)
-                pos += len(emits)
+                # Add TRANSIENT dropdown lines
                 for emit in emits:
-                    self.win.add_body(emit)
+                    self.win.add_body(emit, context=Context(genre='TRANSIENT'))
 
     def hide_ACTION(self):
         """Handle 'x' key on REVIEW screen - toggle warning suppression"""
         gw = self.gw
-        pos = self.win.pick_pos
-        if gw.clues and 0 <= pos < len(gw.clues):
-            clue = gw.clues[pos]
-            if clue.cat == 'warn':
-                opposite = not gw.warn_db.is_inhibit(clue.ident)
-                gw.warn_db.inhibit(clue.ident, opposite)
-                gw.warn_db.write_if_dirty()
-            elif clue.cat == 'param':
-                gw.deactivate_param(clue.ident)
+        ctx = self.win.get_picked_context()
+        if ctx:
+            if ctx.genre == 'warn':
+                warn_key = getattr(ctx, 'warn_key', None)
+                if warn_key:
+                    opposite = not gw.warn_db.is_inhibit(warn_key)
+                    gw.warn_db.inhibit(warn_key, opposite)
+                    gw.warn_db.write_if_dirty()
+            elif ctx.genre == 'param':
+                param_name = getattr(ctx, 'param_name', None)
+                if param_name:
+                    gw.deactivate_param(param_name)
 
     def undo_ACTION(self):
         """Handle 'u' key on REVIEW screen - undo parameter change"""
@@ -619,7 +615,8 @@ class RestoreScreen(GrubWizScreen):
             prefix = '●' if checksum == gw.grub_checksum else ' '
             ref = 'CMP' if self.baseline_bak == bak_path else '   '
             self.bak_paths.append(bak_path)
-            self.win.add_body(f'{prefix} {ref} {bak_path.name}')
+            self.win.add_body(f'{prefix} {ref} {bak_path.name}',
+                            context=Context(genre='backup', bak_path=bak_path))
 
     def baseline_ACTION(self):
         """Handle 'b' key on RESTORE screen - baseline for CMP"""
@@ -851,7 +848,6 @@ class WarnScreen(GrubWizScreen):
     def __init__(self, grub_wiz):
         """Constructor initializes search state"""
         super().__init__(grub_wiz)
-        self.keys = []  # key ('param: text') in each position
         self.search = ''
         self.regex = None  # compiled
 
@@ -871,14 +867,16 @@ class WarnScreen(GrubWizScreen):
         """ TBD """
         gw = self.gw
         db = gw.warn_db
-        pos = self.win.pick_pos
+        ctx = self.win.get_picked_context()
         inh = False
-        if 0 <= pos < len(self.keys):
-            key = self.keys[pos]
-            inh = db.is_inhibit(key)
+        if ctx and ctx.genre == 'warn':
+            warn_key = getattr(ctx, 'warn_key', None)
+            if warn_key:
+                inh = db.is_inhibit(warn_key)
         line = 'WARNINGS-CONFIG'
         line += f"   [x]:{'allow-warning' if inh else 'inhibit-warning'}"
-        line += f'   /{self.search}'
+        # Show search bar (with cursor if active, or just text if not)
+        line += gw.search_bar.get_display_string(prefix='   /')
         line += '   ESC=back [q]uit'
         gw.add_fancy_header(line)
 
@@ -889,7 +887,6 @@ class WarnScreen(GrubWizScreen):
         all_info = db.all_info
         keys = sorted(all_info.keys())
         prev_param = None
-        self.keys = []
 
         for key in keys:
             sev = all_info[key]
@@ -920,24 +917,25 @@ class WarnScreen(GrubWizScreen):
 
             # Search against full_line, but display line
             if not self.regex or self.regex.search(full_line):
-                self.win.add_body(line)
-                self.keys.append(key)
+                self.win.add_body(line, context=Context(genre='warn', warn_key=key))
                 # Only update prev_param for lines that are actually displayed
                 prev_param = param_name
 
     def hide_ACTION(self):
         """ TBD """
         gw = self.gw
-        pos = self.win.pick_pos
-        if self.keys and 0 <= pos < len(self.keys):
-            key = self.keys[pos]
-            opposite = not gw.warn_db.is_inhibit(key)
-            gw.warn_db.inhibit(key, opposite)
-            gw.warn_db.write_if_dirty()
+        ctx = self.win.get_picked_context()
+        if ctx and ctx.genre == 'warn':
+            warn_key = getattr(ctx, 'warn_key', None)
+            if warn_key:
+                opposite = not gw.warn_db.is_inhibit(warn_key)
+                gw.warn_db.inhibit(warn_key, opposite)
+                gw.warn_db.write_if_dirty()
 
     def slash_ACTION(self):
-        """ TBD """
-        self.search, self.regex = self.slash_PROMPT(self.search)
+        """Start incremental search mode"""
+        self.gw.search_bar.start(self.search)
+        self.gw.win.passthrough_mode = True
 
 class HelpScreen(GrubWizScreen):
     """HELP screen"""
@@ -1066,8 +1064,62 @@ class GrubWiz:
 
     def setup_win(self):
         """TBD """
-        spinner = self.spinner = OptionSpinner()
+        # Create ConsoleWindow first (needed by screen objects)
+        win_opts = ConsoleWindowOpts()
+        win_opts.head_line = True
+        win_opts.ctrl_c_terminates = False
+        win_opts.return_if_pos_change = True
+        win_opts.single_cell_scroll_indicator = True
+        win_opts.dialog_abort = 'ESC'
+        win_opts.answer_show_redraws = self.cli_opts.answer_timeout_debug
+        win_opts.min_cols_rows = (70, 10)  # Allow smaller terminals (down from default 20 rows)
+        self.win = ConsoleWindow(win_opts)
+
+        # Check terminal size at startup and wait for resize if too small
+        import curses
+        rows, cols = self.win.scr.getmaxyx()
+        min_cols, min_rows = win_opts.min_cols_rows
+        while rows < min_rows or cols < min_cols:
+            # Terminal too small - show error and wait for resize
+            self.win.scr.clear()
+            error_msg = f"Terminal too small: {cols}x{rows} (need at least {min_cols}x{min_rows})"
+            try:
+                self.win.scr.addstr(0, 0, error_msg, curses.A_REVERSE)
+                self.win.scr.addstr(2, 0, "Please resize your terminal to continue...")
+                self.win.scr.addstr(3, 0, "(or press ESC to exit)")
+            except curses.error:
+                pass  # Terminal too small even for error message
+            self.win.scr.refresh()
+            key = self.win.scr.getch()
+            if key == 27:  # ESC key
+                # User wants to exit
+                self.win.stop_curses()
+                print(f"\n{error_msg}")
+                print(f"Please resize your terminal to at least {min_cols}x{min_rows} and try again.\n")
+                import sys
+                sys.exit(1)
+            if key == curses.KEY_RESIZE:
+                curses.update_lines_cols()
+            # Check size again
+            rows, cols = self.win.scr.getmaxyx()
+
+        # Initialize screen objects and ScreenStack (with None for spins - will be set later)
+        self.screens = {
+            HOME_ST: HomeScreen(self),
+            REVIEW_ST: ReviewScreen(self),
+            RESTORE_ST: RestoreScreen(self),
+            VIEW_ST: ViewScreen(self),
+            COMPARE_ST: CompareScreen(self),
+            WARN_ST: WarnScreen(self),
+            HELP_ST: HelpScreen(self),
+        }
+        self.ss = ScreenStack(self.win, None, SCREENS, self.screens)
+
+        # Create OptionSpinner with stack reference for proper action scoping
+        spinner = self.spinner = OptionSpinner(stack=self.ss)
         self.spins = self.spinner.default_obj
+
+        # Register all keys (with stack available, actions will be properly scoped)
         spinner.add_key('escape', 'ESC - back to prev screen', genre="action", keys=[27,])
         spinner.add_key('help_mode', '? - enter help screen', genre='action')
         spinner.add_key('verbose_header', 'm - more keys shown', vals=[False, True])
@@ -1103,41 +1155,103 @@ class GrubWiz:
 
         spinner.add_key('slash', '/ - filter pattern [in WARNINGS screen]', genre='action')
 
+        # Add ENTER to handled keys so it passes through during search (no visible menu item)
+        # This is needed for IncrementalSearchBar to receive ENTER key in passthrough mode
+        spinner.add_key('_search_enter', '', keys=[10, 13])
 
+        # Create incremental search bar for WarnScreen filtering
+        def on_search_change(text):
+            # Compile the search regex incrementally as user types
+            warn_screen = self.screens.get(WARN_ST)
+            if warn_screen:
+                warn_screen.search = text
+                try:
+                    warn_screen.regex = re.compile(text, re.IGNORECASE) if text else None
+                except re.error:
+                    # Invalid regex, keep previous regex
+                    pass
 
-        win_opts = ConsoleWindowOpts()
-        win_opts.head_line = True
-        win_opts.keys = spinner.keys
-        win_opts.ctrl_c_terminates = False
-        win_opts.return_if_pos_change = True
-        win_opts.single_cell_scroll_indicator = True
-        win_opts.dialog_abort = 'ESC'
-        win_opts.answer_show_redraws = self.cli_opts.answer_timeout_debug
-        self.win = ConsoleWindow(win_opts)
+        def on_search_accept(text):
+            # Finalize search: ensure the text is saved and exit passthrough mode
+            warn_screen = self.screens.get(WARN_ST)
+            if warn_screen:
+                warn_screen.search = text
+                try:
+                    warn_screen.regex = re.compile(text, re.IGNORECASE) if text else None
+                except re.error:
+                    # Invalid regex at end - keep previous regex
+                    pass
+            self.win.passthrough_mode = False
 
-        # Initialize screen objects first (before ScreenStack)
-        self.screens = {
-            HOME_ST: HomeScreen(self),
-            REVIEW_ST: ReviewScreen(self),
-            RESTORE_ST: RestoreScreen(self),
-            VIEW_ST: ViewScreen(self),
-            COMPARE_ST: CompareScreen(self),
-            WARN_ST: WarnScreen(self),
-            HELP_ST: HelpScreen(self),
-        }
+        def on_search_cancel(original_text):
+            # Restore original search text and exit passthrough mode
+            warn_screen = self.screens.get(WARN_ST)
+            if warn_screen:
+                warn_screen.search = original_text
+                try:
+                    warn_screen.regex = re.compile(original_text, re.IGNORECASE) if original_text else None
+                except re.error:
+                    warn_screen.regex = None
+            self.win.passthrough_mode = False
 
-        # Create ScreenStack with screen objects for hook invocation
-        self.ss = ScreenStack(self.win, self.spins, SCREENS, self.screens)
+        self.search_bar = IncrementalSearchBar(
+            on_change=on_search_change,
+            on_accept=on_search_accept,
+            on_cancel=on_search_cancel
+        )
+
+        # Create incremental search bar for HomeScreen parameter filtering
+        def on_home_search_change(text):
+            # Compile the search regex incrementally as user types
+            home_screen = self.screens.get(HOME_ST)
+            if home_screen:
+                home_screen.search = text
+                try:
+                    home_screen.regex = re.compile(text, re.IGNORECASE) if text else None
+                except re.error:
+                    # Invalid regex, keep previous regex
+                    pass
+
+        def on_home_search_accept(text):
+            # Finalize search: ensure the text is saved and exit passthrough mode
+            home_screen = self.screens.get(HOME_ST)
+            if home_screen:
+                home_screen.search = text
+                try:
+                    home_screen.regex = re.compile(text, re.IGNORECASE) if text else None
+                except re.error:
+                    # Invalid regex at end - keep previous regex
+                    pass
+            self.win.passthrough_mode = False
+
+        def on_home_search_cancel(original_text):
+            # Restore original search text and exit passthrough mode
+            home_screen = self.screens.get(HOME_ST)
+            if home_screen:
+                home_screen.search = original_text
+                try:
+                    home_screen.regex = re.compile(original_text, re.IGNORECASE) if original_text else None
+                except re.error:
+                    home_screen.regex = None
+            self.win.passthrough_mode = False
+
+        self.home_search_bar = IncrementalSearchBar(
+            on_change=on_home_search_change,
+            on_accept=on_home_search_accept,
+            on_cancel=on_home_search_cancel
+        )
+
+        # Important: Register keys with the window
+        self.win.set_handled_keys(self.spinner)
 
     def get_enums_regex(self):
         """ TBD"""
         enums, regex, param_name, value = None, None, None, None
-        pos = self.win.pick_pos
         if self.ss.is_curr((REVIEW_ST, HOME_ST)):
-            if self.clues and 0 <= pos < len(self.clues):
-                clue = self.clues[pos]
-                if clue.cat == 'param':
-                    param_name = clue.ident
+            # Get context for the current line
+            ctx = self.win.get_picked_context()
+            if ctx and ctx.genre == 'param':
+                param_name = getattr(ctx, 'param_name', None)
         if not param_name:
             return '', {}, {}, '', None
 
@@ -1155,18 +1269,22 @@ class GrubWiz:
             line = line[:wid-1] + '▶'
         return line
 
-    def add_wrapped_body_line(self, line, indent, is_current):
+    def add_wrapped_body_line(self, line, indent, is_current, context=None):
         """ TBD """
         if not is_current:
-            self.win.add_body(self.truncate_line(line))
+            self.win.add_body(self.truncate_line(line), context=context)
             return 1
 
         wid = self.win.cols
         wrapped = textwrap.fill(line, width=wid-1,
                     subsequent_indent=' '*indent)
         wraps = wrapped.split('\n')
-        for wrap in wraps:
-            self.win.add_body(wrap)
+        for idx, wrap in enumerate(wraps):
+            # First line gets the context, rest get TRANSIENT
+            if idx == 0:
+                self.win.add_body(wrap, context=context)
+            else:
+                self.win.add_body(wrap, context=Context(genre='TRANSIENT'))
         return len(wraps) # lines added
 
     def is_warn_hidden(self, param_name, hey):
@@ -1196,53 +1314,9 @@ class GrubWiz:
 
 
 
-    def ensure_visible_group(self):
-        """ TBD """
-        win = self.win
-        pos = win.pick_pos
-        group_cnt = 1
-        if 0 <= pos < len(self.clues):
-            group_cnt = self.clues[pos].group_cnt
-        over = pos - win.scroll_pos + group_cnt - win.scroll_view_size
-        if over >= 0:
-            old_scroll_pos = win.scroll_pos
-            win.scroll_pos += over + 1 # scroll back by number of out-of-view lines
-            # Only reset refresh timer if we actually scrolled
-            if win.scroll_pos != old_scroll_pos:
-                self.next_prompt_seconds = [0.1, 0.1]
-
-
-    def adjust_picked_pos_w_clues(self):
-        """ This assumes: the clues were created by the body.
-        """
-
-        pos = self.win.pick_pos
-        if not self.ss.is_curr((HOME_ST, REVIEW_ST)):
-            return pos
-        if not self.clues:
-            return pos
-
-        pos = max(min(len(self.clues)-1, pos), 0)
-        if pos == self.win.pick_pos and pos == self.prev_pos:
-            self.ensure_visible_group()
-            return pos
-        up = bool(pos >= self.prev_pos)
-        for _ in range(2):
-            clue = self.clues[pos]
-            while clue.cat in ('nop', ):
-                pos += 1 if up else -1
-                if 0 <= pos < len(self.clues):
-                    clue = self.clues[pos]
-                else:
-                    pos = max(min(len(self.clues)-1, pos), 0)
-                    break
-            up = bool(not up)
-
-        self.win.pick_pos = pos
-        self.prev_pos = pos
-        # now ensure the whole group is viewable
-        self.ensure_visible_group()
-        return pos
+    # Note: ensure_visible_group() and adjust_picked_pos_w_clues() have been removed
+    # They are no longer needed - Context with genre='DECOR' auto-handles non-pickable lines
+    # and TRANSIENT auto-abut ensures dropdown content stays visible
 
     def is_active_param(self, param_name):
         """ is the param neither commented out nor absent? """
@@ -1490,6 +1564,12 @@ class GrubWiz:
 
     def really_wanna(self, act):
         """ TBD """
+        # Ensure passthrough mode is off before prompting
+        self.win.passthrough_mode = False
+        # Flush input buffer to prevent stray keys from being processed
+        import curses
+        curses.flushinp()
+        # Prompt user for confirmation
         answer = self.win.answer(seed='y',
                          prompt=f"Enter 'yes' to {act}", height=1)
         if answer is None:
@@ -1665,11 +1745,22 @@ class GrubWiz:
                 self.next_prompt_seconds = [3.0]
 
             if key is None:
-                if self.ss.is_curr(REVIEW_ST
-                           ) or self.ss.is_curr(HOME_ST):
-                    self.adjust_picked_pos_w_clues()
+                # Note: adjust_picked_pos_w_clues() removed - Context pickable handles this
+                pass
 
             if key is not None:
+                # Check if any search bar is active and should handle the key
+                if self.search_bar.is_active:
+                    if self.search_bar.handle_key(key):
+                        # Key was handled by warn search bar, clear screen and redraw
+                        win.clear()
+                        continue
+                elif self.home_search_bar.is_active:
+                    if self.home_search_bar.handle_key(key):
+                        # Key was handled by home search bar, clear screen and redraw
+                        win.clear()
+                        continue
+
                 self.spinner.do_key(key, win)
 
                 # Handle app-level quit action
