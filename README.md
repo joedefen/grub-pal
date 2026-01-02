@@ -10,10 +10,12 @@
   -   Parameter validation via regex and cross-checks
   -   Safe defaults and guided choices for common settings
   -   Backups offered when configuration is unique
+  -   **Smart initramfs rebuild**: Detects driver/kernel changes and offers to rebuild initramfs with disk space validation
 
 * **Key Features**
   -   *Smart editing*: Preset choices for common values, regex validation for free-form entries
   -   *Context-aware warnings*: Cross-parameter validation and sensible defaults
+  -   *Automatic initramfs rebuild*: Detects driver/kernel changes that need initramfs updates, validates disk space, and offers safe rebuild across all major distros
   -   *Full backup system*: Tagged, timestamped backups with easy restore and comparison
   -   *Lightweight TUI*: Works everywhere—local, SSH, or minimal environments
   -   *Respects existing config*: Unknown parameters are preserved with minimal validation
@@ -92,7 +94,45 @@ NOTES:
 * Warnings are be dismissed by fixing the values or by inhibiting the warning (with the `x` key).
 * If you inhibit warnings, they remain suppressed in future sessions until allowed.
 * Lines on this screen and others that end with `▶` are truncated. To see the rest of the text, visit that line.
-* When done with your review, type `w` again to finally write the `grub` file; if successful, you will be given the choice to reboot or shutdown or return to `grub-wiz`.
+* When done with your review, type `w` again to finally write the `grub` file and run `update-grub`. **After this succeeds**, `grub-wiz` performs intelligent safety checks:
+
+**Automatic Initramfs Rebuild Detection** (Major Safety Feature)
+
+If you've changed kernel command-line arguments that affect early boot (GPU drivers, kernel mode setting, module loading, encryption, etc.), `grub-wiz` will:
+
+1. **Detect the need**: Checks if changes to `GRUB_CMDLINE_LINUX`, `GRUB_CMDLINE_LINUX_DEFAULT`, or `GRUB_CMDLINE_LINUX_RECOVERY` contain triggers like:
+   - GPU drivers: `i915`, `nvidia`, `nouveau`, `amdgpu`, `radeon`
+   - Kernel mode setting: `nomodeset`, `modeset`
+   - Module control: `module_blacklist`, `rd.driver`
+   - Root filesystem: `root=`, `rootflags`, `rootfstype`
+   - Encryption/LVM: `rd.luks`, `rd.lvm`, `cryptdevice`
+   - And more (see full list in config)
+
+2. **Check disk space**: Calculates space needed based on your existing initramfs files:
+   - Needs ≈ 2× current size (new files created before deleting old ones)
+   - **CRITICAL safety**: Blocks rebuild if insufficient space (prevents bricking your system!)
+   - Example: 229MB of initramfs → needs ~508MB, you have 591GB ✓
+
+3. **Prompt intelligently**:
+   ```
+   ⚠️  Gpu Drivers changes detected ('nvidia').
+   Rebuilding initramfs ensures driver/module changes take effect at early boot.
+
+   Disk space check: OK: 591468MB free in /boot (need ~507MB, surplus: 590961MB)
+
+   Rebuild initramfs now? [y/N]:
+   ```
+
+4. **Execute safely**: Runs the distribution-appropriate command:
+   - Debian/Ubuntu: `update-initramfs -u -k all`
+   - RHEL/Fedora: `dracut --regenerate-all --force`
+   - Arch: `mkinitcpio -P`
+   - Alpine: `mkinitfs`
+   - Gentoo: `genkernel --install initramfs`
+
+**Why This Matters**: Many kernel parameter changes (especially GPU drivers, `nomodeset`, module blacklisting) require initramfs rebuild to take effect. Without it, your changes may not work, or worse, your system may fail to boot. `grub-wiz` prevents this common pitfall automatically.
+
+After the optional initramfs rebuild, you will be given the choice to reboot, poweroff, or return to `grub-wiz`.
 
 ##### GUIDANCE LEVELS AND EXTENDED MENU
 * *Extended Menu*: Typing `m` (i.e., more keys) adds the second line showing the keys for the RestoreScreen (to manage backups) and the "WarningsScreen" to configure (i.e., inhibit and allow) warnings selectively.

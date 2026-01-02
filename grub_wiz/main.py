@@ -1567,8 +1567,7 @@ class GrubWiz:
         # Ensure passthrough mode is off before prompting
         self.win.passthrough_mode = False
         # Flush input buffer to prevent stray keys from being processed
-        import curses
-        curses.flushinp()
+        cs.flushinp()
         # Prompt user for confirmation
         answer = self.win.answer(seed='y',
                          prompt=f"Enter 'yes' to {act}", height=1)
@@ -1614,6 +1613,54 @@ class GrubWiz:
             if not install_rv[0]:
                 print(install_rv[1])
                 ok = False
+
+        # Check if initramfs rebuild is needed
+        if ok and self.distro_vars.update_initramfs:
+            needs_rebuild, trigger, category = self.grub_writer.should_rebuild_initramfs(diffs)
+            if needs_rebuild:
+                # Format category name for display
+                category_display = category.replace('_', ' ').title()
+                print(f"\n⚠️  {category_display} changes detected ('{trigger}').")
+                print("Rebuilding initramfs ensures driver/module changes take effect at early boot.")
+
+                # Check disk space before prompting
+                space_info = self.grub_writer.check_initramfs_space()
+                print(f"\nDisk space check: {space_info['message']}")
+
+                # Determine if we should proceed
+                if space_info['is_critical']:
+                    print("\n🛑 CRITICAL: Insufficient disk space!")
+                    print("   Initramfs rebuild would likely FAIL and may brick your system.")
+                    print("   Please free up space in /boot first.")
+                    print("\nSkipping initramfs rebuild for safety.")
+                elif not space_info['is_sufficient']:
+                    print("\n⚠️  Space is tight. Proceeding is risky but may work.")
+                    choice = input('Continue with rebuild anyway? [y/N]: ').strip().lower()
+                    if choice != 'y':
+                        print('\nSkipping initramfs rebuild.')
+                        print('Note: Some changes may not take effect until initramfs is rebuilt.')
+                    else:
+                        initramfs_ok, initramfs_msg = self.grub_writer.run_initramfs_update()
+                        if initramfs_ok:
+                            print('\n✓ Initramfs rebuilt successfully')
+                        else:
+                            print(f'\n✗ Initramfs rebuild failed:\n{initramfs_msg}')
+                            print('Your GRUB changes are applied, but initramfs was not rebuilt.')
+                else:
+                    # Sufficient space, normal prompt
+                    choice = input('\nRebuild initramfs now? [y/N]: ').strip().lower()
+                    if choice == 'y':
+                        initramfs_ok, initramfs_msg = self.grub_writer.run_initramfs_update()
+                        if initramfs_ok:
+                            print('\n✓ Initramfs rebuilt successfully')
+                        else:
+                            print(f'\n✗ Initramfs rebuild failed:\n{initramfs_msg}')
+                            print('Your GRUB changes are applied, but initramfs was not rebuilt.')
+                            print('You may need to rebuild it manually later.')
+                    else:
+                        print('\nSkipping initramfs rebuild.')
+                        print('Note: Some changes may not take effect until initramfs is rebuilt.')
+
         if ok:
             os.system('\n\necho "OK ... /etc/default/grub newly written/updated"')
         else:

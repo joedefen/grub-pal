@@ -21,6 +21,8 @@ class DistroVars:
         grub_cfg: Path to the main GRUB configuration file (e.g., /boot/grub/grub.cfg)
         etc_grub: Path to /etc/default/grub (GRUB defaults configuration)
         update_grub: Path to the GRUB update command (e.g., grub-mkconfig, update-grub)
+        update_initramfs: Path to the initramfs update command (e.g., update-initramfs, dracut)
+        initramfs_triggers: Dict of trigger categories and keywords that require initramfs rebuild
         is_crippled: True if running in limited mode due to missing components
     """
     default_yaml = {
@@ -32,8 +34,14 @@ class DistroVars:
             'update_grub': ['grub-mkconfig',
                             'grub2-mkconfig',
                             'update-grub'],
+            'update_initramfs': ['update-initramfs',
+                                 'dracut',
+                                 'mkinitcpio',
+                                 'mkinitfs',
+                                 'genkernel'],
             'etc_grub': ['/etc/default/grub']
-        }
+        },
+        '_update_initramfs_triggers_': {}
     }
     def __init__(self, yaml_data=None):
         """
@@ -51,6 +59,10 @@ class DistroVars:
         self.grub_cfg = self._find_first_path(vars_cfg.get('grub_cfg', []))
         self.etc_grub = self._find_first_path(vars_cfg.get('etc_grub', []))
         self.update_grub = self._find_binary(vars_cfg.get('update_grub', []))
+        self.update_initramfs = self._find_binary(vars_cfg.get('update_initramfs', []))
+
+        # Load initramfs triggers for detecting when rebuild is needed
+        self.initramfs_triggers = yaml_data.get('_update_initramfs_triggers_', {})
 
         # 2. Check and Prompt if needed
         self._check_and_confirm()

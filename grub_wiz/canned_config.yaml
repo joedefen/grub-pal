@@ -9,8 +9,63 @@ _distro_vars_:
     - grub2-mkconfig
     - update-grub
 
+  update_initramfs:
+    - update-initramfs           # Debian/Ubuntu
+    - dracut                     # RHEL/Fedora/SUSE/Rocky
+    - mkinitcpio                 # Arch
+    - mkinitfs                   # Alpine
+    - genkernel                  # Gentoo
+
   etc_grub:
     - /etc/default/grub
+
+_update_initramfs_triggers_:
+  # Kernel cmdline parameters that affect early boot and require initramfs rebuild
+  # These are checked against GRUB_CMDLINE_LINUX, GRUB_CMDLINE_LINUX_DEFAULT,
+  # and GRUB_CMDLINE_LINUX_RECOVERY
+
+  gpu_drivers:
+    - i915              # Intel graphics
+    - nvidia            # NVIDIA proprietary
+    - nouveau           # NVIDIA open source
+    - amdgpu            # AMD Radeon
+    - radeon            # AMD legacy
+    - mgag200           # Matrox
+    - ast               # ASPEED
+
+  kernel_mode_setting:
+    - nomodeset         # Disable kernel mode setting
+    - modeset           # Enable/configure KMS
+
+  module_control:
+    - module_blacklist  # Blacklist modules
+    - modprobe          # Module parameters
+    - rd.driver         # Dracut driver control
+
+  root_filesystem:
+    - root=             # Root device change
+    - rootflags         # Root mount options
+    - rootfstype        # Root filesystem type
+
+  encryption_lvm:
+    - rd.luks           # LUKS encryption (dracut)
+    - rd.lvm            # LVM volumes (dracut)
+    - cryptdevice       # Arch LUKS
+
+  acpi_hardware:
+    - acpi              # ACPI control
+    - pci               # PCI subsystem
+    - iommu             # IOMMU settings
+
+  early_console:
+    - console=          # Early console
+    - earlyprintk       # Early kernel debug
+    - debug             # Kernel debug mode
+
+  network_boot:
+    - rd.neednet        # Network required for boot (dracut)
+    - ip=               # Network configuration
+    - bootdev           # Boot device network config
 
 #   ----- SCHEMA -----
 #   {section-name}:
